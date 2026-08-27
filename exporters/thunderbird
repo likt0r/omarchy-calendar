@@ -14,6 +14,7 @@ EXDATE, RDATE and overridden occurrences. tests/exporter-test.py pins it.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -44,6 +45,30 @@ WINDOWS_TZ = {
 
 # Obergrenze je Serie - Schutz gegen endlose RRULEs ohne UNTIL/COUNT.
 MAX_OCCURRENCES = 2000
+
+# Details fuers Seitenpanel. Beschreibungen gehen bis 26 KB und
+# Teilnehmerlisten bis fast 300 Personen; ungekuerzt blaeht das die Datei auf,
+# die bei jedem Oeffnen des Panels neu gelesen wird.
+MAX_DESCRIPTION = 4000
+MAX_ATTENDEES = 40
+
+# Hosts, deren Links wirklich in eine Konferenz fuehren. Ohne diese Liste
+# oeffnet ein Klick irgendwann den erstbesten Link aus einer Beschreibung --
+# in echten Einladungen sind das support.google.com, Anhaenge auf
+# docs.google.com oder die Telefoneinwahl tel.meet.
+MEETING_HOSTS = (
+    "zoom.us", "zoom.com", "zoomgov.com",
+    "teams.microsoft.com", "teams.live.com",
+    "meet.google.com",
+    "bigbluebutton.org", "whereby.com", "meet.jit.si",
+    "webex.com", "gotomeeting.com", "goto.com", "chime.aws",
+    "meet.nextcloud.com", "vc.rwth-aachen.de",
+)
+# Selbst gehostete Konferenzen tragen keinen bekannten Domainnamen; ein
+# fuehrendes "bbb." oder "meet." ist die verlaesslichste Spur.
+MEETING_HOST_PREFIXES = ("bbb.", "meet.", "bigbluebutton.", "jitsi.", "vc.")
+
+URL_RE = re.compile(r'https?://[^\s<>"\'\\]+')
 
 
 # ------------------------------------------------------------- Zeitzonen
@@ -535,6 +560,134 @@ def expand_event(row, recur_lines, overrides, win_start_utc, win_end_utc, warnin
     return out
 
 
+# ------------------------------------------------- Meeting-Link und Personen
+
+def host_of(url):
+    text = str(url or "")
+    if "://" not in text:
+        return ""
+    rest = text.split("://", 1)[1]
+    host = rest.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+    if "@" in host:
+        host = host.split("@", 1)[1]
+    return host.split(":", 1)[0].lower().rstrip(".")
+
+
+def is_meeting_host(url):
+    host = host_of(url)
+    if host == "":
+        return False
+    for domain in MEETING_HOSTS:
+        if host == domain or host.endswith("." + domain):
+            return True
+    for prefix in MEETING_HOST_PREFIXES:
+        if host.startswith(prefix):
+            return True
+    return False
+
+
+def urls_in(text):
+    # Satzzeichen am Ende gehoeren nicht zur URL.
+    return [u.rstrip(".,;:)\u201d\"'") for u in URL_RE.findall(str(text or ""))]
+
+
+def pick_meeting_url(props):
+    """Der Link, der wirklich in die Konferenz fuehrt - oder ""."""
+    # Teams sagt es selbst; das ist die einzige unzweideutige Quelle.
+    for url in urls_in(props.get("X-MICROSOFT-SKYPETEAMSMEETINGURL", "")):
+        return url
+
+    location = urls_in(props.get("LOCATION", ""))
+    explicit = urls_in(props.get("URL", ""))
+    described = urls_in(props.get("DESCRIPTION", ""))
+
+    # Bekannte Konferenz-Hosts zuerst, in der Reihenfolge ihrer
+    # Verlaesslichkeit: ins Ortsfeld schreibt man den Link absichtlich.
+    for group in (location, explicit, described):
+        for url in group:
+            if is_meeting_host(url):
+                return url
+
+    # Kein bekannter Host: nur das Ortsfeld gilt noch als Absicht. URL kann
+    # auf ein Dokument zeigen, DESCRIPTION auf beliebiges Beiwerk.
+    for url in location:
+        return url
+    return ""
+
+
+def parse_ical_person(line):
+    """ATTENDEE-/ORGANIZER-Zeile -> {name, email, status, role}."""
+    text = str(line or "").strip()
+    if ":" not in text:
+        return None
+    head, _, value = text.partition(":")
+    params = {}
+    for part in head.split(";")[1:]:
+        if "=" in part:
+            key, _, val = part.partition("=")
+            params[key.strip().upper()] = val.strip().strip('"')
+
+    email = params.get("EMAIL", "")
+    if not email and value.lower().startswith("mailto:"):
+        email = value[7:].strip()
+    name = params.get("CN", "") or email
+    if not name:
+        return None
+    return {
+        "name": name,
+        "email": email,
+        "status": params.get("PARTSTAT", ""),
+        "role": params.get("ROLE", ""),
+    }
+
+
+# Monday first, matching WEEKDAYS above and date.weekday() -- not the
+# Sunday-first order the QML side uses for Qt's Locale.
+WEEKDAY_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+                "Saturday", "Sunday"]
+ORDINALS = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth",
+            -1: "last", -2: "second to last"}
+
+
+def describe_rule(body):
+    """RRULE -> ein Satz, den man lesen kann. "" wenn nicht deutbar."""
+    try:
+        rule = parse_rrule(body)
+    except (ValueError, KeyError):
+        return ""
+    freq = rule["freq"]
+    step = rule["interval"]
+
+    if freq == "DAILY":
+        text = "Daily" if step == 1 else "Every %d days" % step
+    elif freq == "WEEKLY":
+        text = "Weekly" if step == 1 else "Every %d weeks" % step
+        days = [WEEKDAY_LONG[wd] for _, wd in rule["byday"]]
+        if days:
+            text += " on " + ", ".join(days)
+    elif freq == "MONTHLY":
+        text = "Monthly" if step == 1 else "Every %d months" % step
+        ordinal = None
+        if rule["bysetpos"]:
+            ordinal = ORDINALS.get(rule["bysetpos"][0])
+        elif rule["byday"] and rule["byday"][0][0] is not None:
+            ordinal = ORDINALS.get(rule["byday"][0][0])
+        if ordinal and rule["byday"]:
+            text += " on the %s %s" % (ordinal, WEEKDAY_LONG[rule["byday"][0][1]])
+        elif rule["bymonthday"]:
+            text += " on day %s" % rule["bymonthday"][0]
+    elif freq == "YEARLY":
+        text = "Yearly" if step == 1 else "Every %d years" % step
+    else:
+        return ""
+
+    if rule["count"]:
+        text += ", %d times" % rule["count"]
+    elif rule["until"]:
+        text += ", until " + rule["until"][0].date().isoformat()
+    return text
+
+
 # ------------------------------------------------------------------ Datenbank
 
 def load_from_db(conn, registry, win_start_utc, win_end_utc, warnings):
@@ -552,15 +705,53 @@ def load_from_db(conn, registry, win_start_utc, win_end_utc, warnings):
     ):
         overrides.setdefault((row["cal_id"], row["id"]), {})[row["recurrence_id"]] = row
 
-    # 2) LOCATION nachschlagen.
-    locations = {}
-    for row in conn.execute(
-        "SELECT item_id, value FROM cal_properties WHERE key = 'LOCATION'"
-    ):
+    # 2) Alles, was das Detailpanel zeigt. LOCATION und DESCRIPTION direkt,
+    #    URL und die Teams-Erweiterung nur zur Linkerkennung.
+    DETAIL_KEYS = ("LOCATION", "DESCRIPTION", "URL",
+                   "X-MICROSOFT-SKYPETEAMSMEETINGURL")
+    details = {}
+    q = ("SELECT item_id, key, value FROM cal_properties WHERE key IN (%s)"
+         % ",".join("?" * len(DETAIL_KEYS)))
+    for row in conn.execute(q, DETAIL_KEYS):
         if row["value"]:
-            locations[row["item_id"]] = row["value"].strip()
+            details.setdefault(row["item_id"], {})[row["key"]] = row["value"].strip()
 
-    # 3) Wiederholungszeilen je Serie.
+    # 3) Personen. Organisator und Teilnehmer liegen in derselben Tabelle,
+    #    unterschieden nur durch das Schluesselwort der iCal-Zeile.
+    people = {}
+    for row in conn.execute("SELECT item_id, icalString FROM cal_attendees"):
+        line = (row["icalString"] or "").strip()
+        person = parse_ical_person(line)
+        if person is None:
+            continue
+        bucket = people.setdefault(row["item_id"], {"organizer": None,
+                                                    "attendees": []})
+        if line.upper().startswith("ORGANIZER"):
+            if bucket["organizer"] is None:
+                bucket["organizer"] = person
+        else:
+            bucket["attendees"].append(person)
+
+    def detail_for(item_id):
+        """Anzeigefertige Details eines Termins."""
+        props = details.get(item_id, {})
+        who = people.get(item_id, {})
+        attendees = who.get("attendees") or []
+        description = props.get("DESCRIPTION", "")
+        if len(description) > MAX_DESCRIPTION:
+            description = description[:MAX_DESCRIPTION].rstrip() + "\u2026"
+        return {
+            "location": props.get("LOCATION", ""),
+            "description": description,
+            "meetingUrl": pick_meeting_url(props),
+            "organizer": who.get("organizer"),
+            # Gekuerzt, aber die wahre Zahl bleibt erhalten, damit das Panel
+            # "und 234 weitere" sagen kann statt zu schweigen.
+            "attendees": attendees[:MAX_ATTENDEES],
+            "attendeeCount": len(attendees),
+        }
+
+    # 4) Wiederholungszeilen je Serie.
     recur = {}
     for row in conn.execute("SELECT item_id, cal_id, icalString FROM cal_recurrence"):
         if row["icalString"]:
@@ -568,7 +759,7 @@ def load_from_db(conn, registry, win_start_utc, win_end_utc, warnings):
                 row["icalString"].strip()
             )
 
-    # 4a) Einfache Termine: direkt im Fenster filtern.
+    # 5a) Einfache Termine: direkt im Fenster filtern.
     q = (
         "SELECT * FROM cal_events "
         "WHERE recurrence_id IS NULL AND (flags & ?) = 0 "
@@ -577,7 +768,7 @@ def load_from_db(conn, registry, win_start_utc, win_end_utc, warnings):
     for row in conn.execute(q, (FLAG_HAS_RECURRENCE, win_start_utc, win_end_utc)):
         if not cal_ok(row["cal_id"]):
             continue
-        events.append({
+        item = {
             "id": row["id"],
             "cal_id": row["cal_id"],
             "start_us": row["event_start"],
@@ -585,20 +776,32 @@ def load_from_db(conn, registry, win_start_utc, win_end_utc, warnings):
             "allday": bool(row["flags"] & FLAG_ALLDAY),
             "title": row["title"],
             "tz": row["event_start_tz"],
-            "location": locations.get(row["id"], ""),
-        })
+            "status": row["ical_status"] or "",
+            "recurrence": "",
+        }
+        item.update(detail_for(row["id"]))
+        events.append(item)
 
-    # 4b) Serien: unabhaengig vom Startdatum holen und expandieren.
+    # 5b) Serien: unabhaengig vom Startdatum holen und expandieren.
     q = "SELECT * FROM cal_events WHERE recurrence_id IS NULL AND (flags & ?) != 0"
     for row in conn.execute(q, (FLAG_HAS_RECURRENCE,)):
         if not cal_ok(row["cal_id"]):
             continue
         key = (row["cal_id"], row["id"])
+        # Einmal je Serie beschreiben, nicht je Vorkommen.
+        rules = [l for l in recur.get(key, []) if l.upper().startswith("RRULE")]
+        summary = ""
+        for line in rules:
+            _, _, body = line.partition(":")
+            summary = describe_rule(body)
+            if summary:
+                break
+
         for occ in expand_event(
             row, recur.get(key, []), overrides.get(key, {}),
             win_start_utc, win_end_utc, warnings,
         ):
-            events.append({
+            item = {
                 "id": occ["id"],
                 "cal_id": row["cal_id"],
                 "start_us": occ["start_us"],
@@ -606,10 +809,13 @@ def load_from_db(conn, registry, win_start_utc, win_end_utc, warnings):
                 "allday": occ["allday"],
                 "title": occ["title"],
                 "tz": occ["tz"],
-                "location": locations.get(occ["prop_id"], ""),
-            })
+                "status": row["ical_status"] or "",
+                "recurrence": summary,
+            }
+            item.update(detail_for(occ["prop_id"]))
+            events.append(item)
 
-    # 4c) Verschobene Einzeltermine, deren neue Lage im Fenster liegt, aber
+    # 5c) Verschobene Einzeltermine, deren neue Lage im Fenster liegt, aber
     #     deren Original-Instant ausserhalb lag: sonst fehlen sie.
     seen = {(e["cal_id"], e["id"], e["start_us"]) for e in events}
     for (cal_id, item_id), by_rid in overrides.items():
@@ -624,7 +830,7 @@ def load_from_db(conn, registry, win_start_utc, win_end_utc, warnings):
                 continue
             if (cal_id, row["id"], start_us) in seen:
                 continue
-            events.append({
+            item = {
                 "id": row["id"],
                 "cal_id": cal_id,
                 "start_us": start_us,
@@ -632,8 +838,11 @@ def load_from_db(conn, registry, win_start_utc, win_end_utc, warnings):
                 "allday": bool(row["flags"] & FLAG_ALLDAY),
                 "title": row["title"],
                 "tz": row["event_start_tz"],
-                "location": locations.get(row["id"], ""),
-            })
+                "status": row["ical_status"] or "",
+                "recurrence": "",
+            }
+            item.update(detail_for(row["id"]))
+            events.append(item)
 
     return events
 
@@ -659,15 +868,60 @@ def build_payload(events, registry, win_start, win_end, warnings):
                 "end_us": ev["end_us"],
                 "allday": ev["allday"],
                 "title": title,
-                "location": ev["location"],
+                "location": ev.get("location", ""),
+                "description": ev.get("description", ""),
+                "meetingUrl": ev.get("meetingUrl", ""),
+                "organizer": ev.get("organizer"),
+                "attendees": ev.get("attendees") or [],
+                "attendeeCount": ev.get("attendeeCount", 0),
+                "status": ev.get("status", ""),
+                "recurrence": ev.get("recurrence", ""),
                 "calendars": [info.get("name", "?")],
                 "color": info.get("color", "#888888"),
             }
         else:
             if info.get("name") and info["name"] not in entry["calendars"]:
                 entry["calendars"].append(info["name"])
-            if not entry["location"] and ev["location"]:
-                entry["location"] = ev["location"]
+            # Dieselbe Einladung liegt in mehreren Kalendern, und nicht jede
+            # Kopie ist gleich vollstaendig: die reichere gewinnt Feld fuer
+            # Feld, statt dass die zufaellig erste alles bestimmt.
+            for field in ("location", "description", "meetingUrl",
+                          "status", "recurrence"):
+                if not entry[field] and ev.get(field):
+                    entry[field] = ev[field]
+            if not entry["organizer"] and ev.get("organizer"):
+                entry["organizer"] = ev["organizer"]
+            if ev.get("attendeeCount", 0) > entry["attendeeCount"]:
+                entry["attendees"] = ev.get("attendees") or []
+                entry["attendeeCount"] = ev["attendeeCount"]
+
+    # Eine Serie traegt ihren Einladungstext in jedem expandierten Vorkommen.
+    # Ungeteilt wuchs die Datei dadurch auf das Fuenffache, und sie wird bei
+    # jedem Oeffnen des Panels neu geparst. Gleiche Details landen deshalb
+    # einmal in `details` und werden per Schluessel referenziert; der
+    # Schluessel ist ein Hash des Inhalts, so dass auch identische Details
+    # verschiedener Termine zusammenfallen.
+    detail_table = {}
+
+    def detail_ref(entry):
+        detail = {}
+        for field in ("description", "meetingUrl", "recurrence"):
+            if entry[field]:
+                detail[field] = entry[field]
+        if entry["status"] and entry["status"].upper() != "CONFIRMED":
+            detail["status"] = entry["status"]
+        if entry["organizer"]:
+            detail["organizer"] = entry["organizer"]
+        if entry["attendees"]:
+            detail["attendees"] = entry["attendees"]
+            detail["attendeeCount"] = entry["attendeeCount"]
+        if not detail:
+            return ""
+        blob = json.dumps(detail, sort_keys=True, ensure_ascii=False,
+                          separators=(",", ":"))
+        key = hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
+        detail_table.setdefault(key, detail)
+        return key
 
     days = {}
     for entry in merged.values():
@@ -703,8 +957,13 @@ def build_payload(events, registry, win_start, win_end, warnings):
                     "spanDays": span,
                     "dayIndex": index,
                 }
+                # Der Ort steht in der Agendazeile selbst, bleibt also inline.
                 if entry["location"]:
                     record["location"] = entry["location"]
+                # Alles, was erst das Detailpanel zeigt, haengt am Schluessel.
+                ref = detail_ref(entry)
+                if ref:
+                    record["detail"] = ref
                 if not entry["allday"]:
                     record["start"] = start_local.isoformat(timespec="minutes")
                     record["end"] = end_local.isoformat(timespec="minutes")
@@ -741,6 +1000,7 @@ def build_payload(events, registry, win_start, win_end, warnings):
         "eventCount": sum(len(v) for v in days.values()),
         "calendars": cal_list,
         "days": days,
+        "details": detail_table,
         "warnings": warnings,
     }
 

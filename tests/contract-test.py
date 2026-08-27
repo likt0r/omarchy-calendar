@@ -94,6 +94,31 @@ for key, events in payload["days"].items():
             check_true("day %s / %s: location not empty when present"
                        % (key, e["title"]), str(e["location"]).strip() != "")
 
+# Detail records: referenced keys must exist, and no record may be dead
+# weight or an empty shell.
+refs = set()
+for events in payload["days"].values():
+    for e in events:
+        if "detail" in e:
+            refs.add(e["detail"])
+table = payload.get("details", {})
+check_true("details: every referenced key exists",
+           all(r in table for r in refs))
+check_true("details: no unreferenced record", set(table) <= refs)
+check_true("details: no empty record", all(len(v) > 0 for v in table.values()))
+for key, rec in table.items():
+    if "meetingUrl" in rec:
+        check_true("details %s: meetingUrl is http(s)" % key,
+                   str(rec["meetingUrl"]).startswith(("http://", "https://")))
+    if "status" in rec:
+        check_true("details %s: CONFIRMED omitted" % key,
+                   str(rec["status"]).upper() != "CONFIRMED")
+    if "attendees" in rec:
+        check_true("details %s: attendeeCount present with attendees" % key,
+                   "attendeeCount" in rec)
+        check_true("details %s: count is at least the listed number" % key,
+                   rec["attendeeCount"] >= len(rec["attendees"]))
+
 # A multi-day event must appear on every day it covers, exactly once each.
 runs = {}
 for key, events in payload["days"].items():

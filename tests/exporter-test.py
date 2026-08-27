@@ -394,6 +394,134 @@ occ = tb.expand_event(
 check("expand: until compares instants, not dates", len(occ), 0)
 
 
+# ------------------------------------------------------- Meeting-Link
+
+check("host_of: plain", tb.host_of("https://zoom.us/j/123"), "zoom.us")
+check("host_of: subdomain and port",
+      tb.host_of("https://correctiv.zoom.us:443/j/1"), "correctiv.zoom.us")
+check("host_of: userinfo stripped",
+      tb.host_of("https://user@meet.google.com/abc"), "meet.google.com")
+check("host_of: uppercase folded", tb.host_of("HTTPS://ZOOM.US/j"), "zoom.us")
+check("host_of: not a url", tb.host_of("Room 3"), "")
+check("host_of: empty", tb.host_of(""), "")
+
+check_true("meeting host: zoom subdomain",
+           tb.is_meeting_host("https://correctiv.zoom.us/j/1"))
+check_true("meeting host: bare zoom.us", tb.is_meeting_host("https://zoom.us/j/1"))
+check_true("meeting host: teams", tb.is_meeting_host("https://teams.microsoft.com/l/x"))
+check_true("meeting host: google meet",
+           tb.is_meeting_host("https://meet.google.com/abc-defg-hij"))
+check_true("meeting host: self-hosted bbb prefix",
+           tb.is_meeting_host("https://bbb.correctiv.org/rooms/x/join"))
+# The noise that made an allow-list necessary in the first place.
+check_true("meeting host: google support is not a meeting",
+           not tb.is_meeting_host("https://support.google.com/meet/answer/1"))
+check_true("meeting host: a doc is not a meeting",
+           not tb.is_meeting_host("https://docs.google.com/document/d/1"))
+# tel.meet is the phone dial-in, and must not match on "meet" alone.
+check_true("meeting host: dial-in is not a meeting",
+           not tb.is_meeting_host("https://tel.meet/abc-defg"))
+check_true("meeting host: lookalike domain rejected",
+           not tb.is_meeting_host("https://notzoom.us.evil.example/j/1"))
+
+check("urls_in: trailing period dropped",
+      tb.urls_in("Join at https://zoom.us/j/123."), ["https://zoom.us/j/123"])
+check("urls_in: trailing bracket dropped",
+      tb.urls_in("(https://zoom.us/j/1)"), ["https://zoom.us/j/1"])
+check("urls_in: several", len(tb.urls_in("a https://a.example b https://b.example")), 2)
+check("urls_in: none", tb.urls_in("Room 3"), [])
+check("urls_in: no text", tb.urls_in(None), [])
+
+# Teams announces itself; that beats everything else.
+check("meeting url: teams extension wins",
+      tb.pick_meeting_url({
+          "X-MICROSOFT-SKYPETEAMSMEETINGURL": "https://teams.microsoft.com/l/win",
+          "LOCATION": "https://zoom.us/j/loser"}),
+      "https://teams.microsoft.com/l/win")
+# The location field is where a join link is put deliberately.
+check("meeting url: location before description",
+      tb.pick_meeting_url({"LOCATION": "https://zoom.us/j/win",
+                           "DESCRIPTION": "https://meet.google.com/lose"}),
+      "https://zoom.us/j/win")
+check("meeting url: from the description when nowhere else",
+      tb.pick_meeting_url({"DESCRIPTION":
+                           "Zoom-Meeting\nhttps://correctiv.zoom.us/j/9\nID: 1"}),
+      "https://correctiv.zoom.us/j/9")
+# A known host anywhere beats an unknown host in the location.
+check("meeting url: known host beats unknown location",
+      tb.pick_meeting_url({"LOCATION": "https://intranet.example/room/3",
+                           "DESCRIPTION": "https://zoom.us/j/real"}),
+      "https://zoom.us/j/real")
+# With no known host at all, only the location counts as intent.
+check("meeting url: unknown host in location still used",
+      tb.pick_meeting_url({"LOCATION": "https://intranet.example/room/3"}),
+      "https://intranet.example/room/3")
+check("meeting url: unknown host in description refused",
+      tb.pick_meeting_url({"DESCRIPTION": "Slides: https://docs.google.com/d/1"}), "")
+check("meeting url: URL property refused when not a meeting",
+      tb.pick_meeting_url({"URL": "https://www.eventbrite.de/e/123"}), "")
+check("meeting url: URL property used when it is a meeting",
+      tb.pick_meeting_url({"URL": "https://meet.google.com/abc"}),
+      "https://meet.google.com/abc")
+check("meeting url: plain room name yields nothing",
+      tb.pick_meeting_url({"LOCATION": "Meeting room 2"}), "")
+check("meeting url: nothing at all", tb.pick_meeting_url({}), "")
+# Never hand a non-http scheme to whatever opens the link.
+check("meeting url: non-http scheme ignored",
+      tb.pick_meeting_url({"LOCATION": "file:///etc/passwd"}), "")
+check("meeting url: javascript scheme ignored",
+      tb.pick_meeting_url({"DESCRIPTION": "javascript:alert(1)"}), "")
+
+# ------------------------------------------------------------ Personen
+
+p = tb.parse_ical_person(
+    "ATTENDEE;CN=Max Mustermann;PARTSTAT=ACCEPTED;CUTYPE=INDIVIDUAL;"
+    "EMAIL=max@example.org:mailto:max@example.org")
+check("person: name", p["name"], "Max Mustermann")
+check("person: email", p["email"], "max@example.org")
+check("person: status", p["status"], "ACCEPTED")
+
+p = tb.parse_ical_person("ORGANIZER;CN=Ada:mailto:ada@example.org")
+check("person: organizer name", p["name"], "Ada")
+check("person: email from mailto", p["email"], "ada@example.org")
+check("person: no partstat", p["status"], "")
+
+p = tb.parse_ical_person("ATTENDEE:mailto:nobody@example.org")
+check("person: falls back to the address as the name",
+      p["name"], "nobody@example.org")
+p = tb.parse_ical_person('ATTENDEE;CN="Quoted, Name":mailto:q@example.org')
+check("person: quoted CN unwrapped", p["name"], "Quoted, Name")
+check("person: garbage", tb.parse_ical_person("ATTENDEE"), None)
+check("person: empty", tb.parse_ical_person(""), None)
+check("person: nameless and addressless", tb.parse_ical_person("ATTENDEE;ROLE=CHAIR:"), None)
+
+# --------------------------------------------------- Serienbeschreibung
+
+check("describe: weekly", tb.describe_rule("FREQ=WEEKLY;BYDAY=WE"),
+      "Weekly on Wednesday")
+check("describe: biweekly", tb.describe_rule("FREQ=WEEKLY;INTERVAL=2;BYDAY=WE"),
+      "Every 2 weeks on Wednesday")
+check("describe: several weekdays",
+      tb.describe_rule("FREQ=WEEKLY;BYDAY=MO,WE"), "Weekly on Monday, Wednesday")
+check("describe: daily", tb.describe_rule("FREQ=DAILY"), "Daily")
+check("describe: every third day", tb.describe_rule("FREQ=DAILY;INTERVAL=3"),
+      "Every 3 days")
+check("describe: monthly by setpos",
+      tb.describe_rule("FREQ=MONTHLY;BYSETPOS=1;BYDAY=TH"),
+      "Monthly on the first Thursday")
+check("describe: monthly by ordinal byday",
+      tb.describe_rule("FREQ=MONTHLY;BYDAY=2WE"),
+      "Monthly on the second Wednesday")
+check("describe: monthly by day number",
+      tb.describe_rule("FREQ=MONTHLY;BYMONTHDAY=1"), "Monthly on day 1")
+check("describe: yearly", tb.describe_rule("FREQ=YEARLY"), "Yearly")
+check("describe: count", tb.describe_rule("FREQ=DAILY;COUNT=5"), "Daily, 5 times")
+check("describe: until",
+      tb.describe_rule("FREQ=WEEKLY;BYDAY=TU;UNTIL=20260428T092959Z"),
+      "Weekly on Tuesday, until 2026-04-28")
+check("describe: unknown freq", tb.describe_rule("FREQ=FORTNIGHTLY"), "")
+check("describe: nonsense", tb.describe_rule(""), "")
+
 # --------------------------------------------------------------- build_payload
 
 registry = {

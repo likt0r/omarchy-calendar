@@ -185,6 +185,92 @@ check('visibleForDay: dots follow the filter',
   Events.dotColors(Events.visibleForDay(vis, '2026-08-27', { hidden: ['Work'] })),
   ['#222', '#333'])
 
+// ------------------------------------------------------------------ details
+
+const withDetails = Events.parse(JSON.stringify({
+  days: {
+    '2026-08-27': [
+      { title: 'Standup', allDay: false, color: '#111', calendars: ['Work'],
+        time: '09:30', endTime: '09:45', spanDays: 1, dayIndex: 0,
+        detail: 'k1' },
+      { title: 'Plain', allDay: false, color: '#111', calendars: ['Work'],
+        time: '11:00', endTime: '12:00', spanDays: 1, dayIndex: 0 },
+      { title: 'Dangling', allDay: false, color: '#111', calendars: ['Work'],
+        time: '13:00', endTime: '14:00', spanDays: 1, dayIndex: 0,
+        detail: 'gone' }
+    ]
+  },
+  details: {
+    k1: {
+      meetingUrl: 'https://meet.google.com/abc-defg-hij',
+      recurrence: 'Weekly on Thursday',
+      organizer: { name: 'Ada', email: 'ada@example.org' },
+      attendees: [{ name: 'Ada', status: 'ACCEPTED' },
+                  { name: 'Bob', status: 'DECLINED' }],
+      attendeeCount: 12
+    }
+  }
+}))
+const withDay = Events.forDay(withDetails, '2026-08-27')
+const [ev1, ev2, ev3] = withDay
+
+check('parse: details map read', Object.keys(withDetails.details), ['k1'])
+check('parse: missing details map is empty',
+  Events.parse('{"days":{}}').details, {})
+check('emptyData: has a details map', Events.emptyData().details, {})
+
+check('detailFor: resolved by key',
+  Events.detailFor(withDetails, ev1).recurrence, 'Weekly on Thursday')
+check('detailFor: event without a key', Events.detailFor(withDetails, ev2), {})
+// A key pointing nowhere must not throw or invent a record.
+check('detailFor: dangling key', Events.detailFor(withDetails, ev3), {})
+check('detailFor: null data', Events.detailFor(null, ev1), {})
+check('detailFor: null event', Events.detailFor(withDetails, null), {})
+checkTrue('hasDetail: true for a real record', Events.hasDetail(withDetails, ev1))
+checkTrue('hasDetail: false without a key', !Events.hasDetail(withDetails, ev2))
+checkTrue('hasDetail: false for a dangling key', !Events.hasDetail(withDetails, ev3))
+
+// The panel opens this, so it is validated here too and not only upstream.
+check('meetingUrl: https passes',
+  Events.meetingUrl(withDetails, ev1), 'https://meet.google.com/abc-defg-hij')
+check('meetingUrl: absent', Events.meetingUrl(withDetails, ev2), '')
+const evil = k => Events.meetingUrl(
+  Events.parse(JSON.stringify({ days: {}, details: { x: { meetingUrl: k } } })),
+  { detail: 'x' })
+check('meetingUrl: file scheme refused', evil('file:///etc/passwd'), '')
+check('meetingUrl: javascript scheme refused', evil('javascript:alert(1)'), '')
+check('meetingUrl: relative path refused', evil('/etc/passwd'), '')
+check('meetingUrl: empty refused', evil(''), '')
+check('meetingUrl: whitespace refused', evil('https://a.example /x'), '')
+check('meetingUrl: http passes', evil('http://a.example/x'), 'http://a.example/x')
+
+check('shortUrl: host and first segment',
+  Events.shortUrl('https://meet.google.com/abc-defg-hij'), 'meet.google.com/abc-defg-hij')
+check('shortUrl: deeper path elided',
+  Events.shortUrl('https://bbb.correctiv.org/rooms/x/join'), 'bbb.correctiv.org/rooms/…')
+// Query and deeper segments both go, which also keeps the meeting id and
+// its password out of the panel.
+check('shortUrl: query and deeper path dropped',
+  Events.shortUrl('https://zoom.us/j/123?pwd=secret'), 'zoom.us/j/\u2026')
+check('shortUrl: www stripped', Events.shortUrl('https://www.a.example/'), 'a.example')
+check('shortUrl: host only', Events.shortUrl('https://a.example'), 'a.example')
+check('shortUrl: not a url', Events.shortUrl('Room 3'), 'Room 3')
+check('shortUrl: empty', Events.shortUrl(''), '')
+
+check('attendeeMark: accepted', Events.attendeeMark('ACCEPTED'), '\u2713')
+check('attendeeMark: declined', Events.attendeeMark('DECLINED'), '\u2715')
+check('attendeeMark: tentative', Events.attendeeMark('tentative'), '?')
+check('attendeeMark: needs action', Events.attendeeMark('NEEDS-ACTION'), '\u00b7')
+check('attendeeMark: unknown', Events.attendeeMark(''), '\u00b7')
+
+check('attendeeOverflow: truncated list reports the remainder',
+  Events.attendeeOverflow(Events.detailFor(withDetails, ev1)), 10)
+check('attendeeOverflow: complete list',
+  Events.attendeeOverflow({ attendees: [1, 2], attendeeCount: 2 }), 0)
+check('attendeeOverflow: no attendees', Events.attendeeOverflow({}), 0)
+check('attendeeOverflow: count missing', 
+  Events.attendeeOverflow({ attendees: [1, 2] }), 0)
+
 // ------------------------------------------------------- calendar settings
 
 const withCals = Events.parse(JSON.stringify({

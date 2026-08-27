@@ -41,6 +41,7 @@ Top level:
 | `eventCount` | Total events across all days. |
 | `calendars` | `[{name, color}]` — every source calendar included. |
 | `days` | The payload: `"YYYY-MM-DD"` → array of events. |
+| `details` | Shared detail records, `"<key>"` → object. Optional. |
 | `warnings` | Strings the exporter wants surfaced. May be empty. |
 
 Each event in a day's array:
@@ -57,6 +58,38 @@ Each event in a day's array:
 | `spanDays` | yes | `1` for a normal event, more for a run. |
 | `dayIndex` | yes | 0-based position within that run. |
 | `location` | optional | Omitted rather than empty when unknown. |
+| `detail` | optional | Key into the top-level `details` map. Omitted when there is nothing to show. |
+
+### details
+
+Everything the side panel shows, and nothing the agenda row needs. It lives
+in a shared map rather than on each event because a recurring series repeats
+its invitation text in every expanded occurrence: inlining it grew a real
+calendar's file fivefold, and that file is re-read whenever the popup opens.
+Key the records however you like — the bundled exporter hashes their content,
+so identical details of unrelated events collapse into one too.
+
+| Field | Meaning |
+|---|---|
+| `description` | Free text. Cap it; real invitations reach 26 kB. |
+| `meetingUrl` | A join link, `http`/`https` only. See below. |
+| `recurrence` | One human-readable line, e.g. `Every 2 weeks on Wednesday`. |
+| `status` | `TENTATIVE` or `CANCELLED`. Omit `CONFIRMED` — it says nothing. |
+| `organizer` | `{name, email}`. |
+| `attendees` | `[{name, email, status, role}]`, truncated if huge. |
+| `attendeeCount` | The real total, so a truncated list can say what it left out. |
+
+Every field is optional; a record with none of them should not exist.
+
+**`meetingUrl` is a link a click will open, so it carries the same weight as
+a command.** Two rules follow. Emit `http`/`https` only — never `file:`,
+never `javascript:`. And do not simply take the first link you find: real
+invitations are full of them. The bundled exporter matches known
+conferencing hosts (Zoom, Teams, Google Meet, BigBlueButton, Jitsi, Webex
+and friends) and falls back to the location field alone, because that is
+where a join link is put deliberately. Without that filter a click on a
+Zoom invitation opens `support.google.com`, an attachment on
+`docs.google.com`, or the phone dial-in at `tel.meet`.
 
 Rules the panel relies on:
 
@@ -72,6 +105,29 @@ Rules the panel relies on:
 - **Written atomically.** Write a temporary file and `rename` it. The panel
   watches the path and will read whatever is there the moment it changes;
   a partial write would flash as a broken calendar.
+
+A file with a detail record:
+
+```json
+{
+  "days": {
+    "2026-08-27": [
+      {"title": "Standup", "allDay": false, "color": "#3C6EBA",
+       "calendars": ["Work"], "time": "09:30", "endTime": "09:45",
+       "spanDays": 1, "dayIndex": 0, "detail": "a1b2c3d4e5f6"}
+    ]
+  },
+  "details": {
+    "a1b2c3d4e5f6": {
+      "meetingUrl": "https://meet.google.com/abc-defg-hij",
+      "recurrence": "Weekly on Thursday",
+      "organizer": {"name": "Ada", "email": "ada@example.org"},
+      "attendees": [{"name": "Ada", "status": "ACCEPTED"}],
+      "attendeeCount": 1
+    }
+  }
+}
+```
 
 A minimal valid file:
 

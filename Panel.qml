@@ -136,6 +136,39 @@ Panel {
 
   property bool showSettings: false
 
+  // ---- The side panel. Holding the event itself rather than an index: the
+  //      agenda it came from is rebuilt whenever a filter or the clock
+  //      changes, and an index would then point at something else.
+  property var detailEvent: null
+  readonly property bool detailOpen: detailEvent !== null
+  readonly property var detailRecord: Events.detailFor(eventData, detailEvent)
+  readonly property int detailPaneWidth: Style.space(330)
+  readonly property var detailGuests: {
+    var list = root.detailRecord.attendees
+    return (list && list.length) ? list : []
+  }
+
+  function showDetail(event) {
+    // Clicking the open row again closes it, which is what a second click on
+    // the same thing is expected to do.
+    if (root.detailEvent === event) root.detailEvent = null
+    else root.detailEvent = event
+  }
+
+  function closeDetail() {
+    root.detailEvent = null
+  }
+
+  // Only ever an http(s) URL, checked here as well as in Events.js and in
+  // the exporter: this hands a string to a process that opens it.
+  function joinMeeting(url) {
+    var text = String(url || "")
+    if (!/^https?:\/\/[^\s]+$/.test(text)) return
+    if (openerProc.running) return
+    openerProc.command = ["xdg-open", text]
+    openerProc.running = true
+  }
+
   readonly property var calendarRows: Events.calendarRows(eventData, hiddenCalendars)
 
   function toggleCalendar(name) {
@@ -181,6 +214,7 @@ Panel {
   }
 
   function selectDay(key) {
+    if (String(key) !== root.selectedKey) root.closeDetail()
     root.selectedKey = String(key)
   }
 
@@ -218,6 +252,7 @@ Panel {
     // Reopening should land on the calendar, not on whatever screen the
     // panel happened to be left on.
     root.showSettings = false
+    root.closeDetail()
     // Dismissing the panel mid-edit would otherwise leave the inputs up,
     // waiting behind a closed popup for the next time it opens.
     if (root.editingLife) root.cancelEditingLife()
@@ -373,6 +408,12 @@ Panel {
     onLoadFailed: root.loadEvents("")
   }
 
+  // Hands the link to the desktop rather than guessing a browser.
+  Process {
+    id: openerProc
+    command: []
+  }
+
   Process {
     id: syncProc
     command: root.exporterPath === ""
@@ -394,8 +435,11 @@ Panel {
     open: root.opened
     centerOnBar: true
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(560))
-    contentHeight: panel.fittedContentHeight(calendarColumn.implicitHeight)
+    contentWidth: panel.fittedContentWidth(
+      root.detailOpen ? Style.space(560) + root.detailPaneWidth : Style.space(560))
+    contentHeight: panel.fittedContentHeight(Math.max(
+      calendarColumn.implicitHeight,
+      root.detailOpen ? detailColumn.implicitHeight + Style.space(24) : 0))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -417,9 +461,333 @@ Panel {
         else if (t === "w" || t === "W") root.toggleWeekStart()
       }
 
+      // ---- Details, beside the calendar rather than below it: the agenda
+      //      row it belongs to stays visible and marked, so the two read as
+      //      one thing. Its own Flickable, so a long invitation text scrolls
+      //      without dragging the calendar with it.
+      Rectangle {
+        visible: root.detailOpen
+        anchors.left: calendarScroll.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: Style.spacing.hairline
+        color: root.contentForeground
+        opacity: 0.12
+      }
+
+      Flickable {
+        id: detailScroll
+        visible: root.detailOpen
+        anchors.left: calendarScroll.right
+        anchors.leftMargin: Style.space(14)
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        contentWidth: width
+        contentHeight: detailColumn.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        interactive: contentHeight > height
+
+        Column {
+          id: detailColumn
+          width: detailScroll.width - Style.space(8)
+          spacing: Style.space(8)
+
+          Item {
+            width: parent.width
+            height: Math.max(detailTitleLabel.height, detailCloseButton.size)
+
+            Text {
+              id: detailTitleLabel
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: "EVENT"
+              color: Qt.darker(root.contentForeground, 1.4)
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              font.letterSpacing: 1
+              font.bold: true
+            }
+
+            PanelActionButton {
+              id: detailCloseButton
+              anchors.right: parent.right
+              anchors.rightMargin: -Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "󰅖"
+              tooltipText: "Close details"
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              onClicked: root.closeDetail()
+            }
+          }
+
+          Text {
+            width: parent.width
+            text: root.detailEvent ? String(root.detailEvent.title) : ""
+            color: root.contentForeground
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.subtitle
+            font.bold: true
+            wrapMode: Text.WordWrap
+          }
+
+          // Cancelled or tentative changes what the entry means, so it is
+          // stated rather than left to the reader to notice.
+          Text {
+            readonly property string state:
+              String(root.detailRecord.status || "").toUpperCase()
+            visible: state !== ""
+            text: state === "CANCELLED" ? "Cancelled" : "Tentative"
+            color: Color.accent
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+
+          Text {
+            width: parent.width
+            text: {
+              if (!root.detailEvent) return ""
+              var when = Qt.formatDate(root.selectedDate, "dddd d MMMM")
+              if (root.detailEvent.allDay) return when + "  ·  all day"
+              var span = Events.timeLabel(root.detailEvent)
+              return span === "" ? when : when + "  ·  " + span
+            }
+            color: Qt.darker(root.contentForeground, 1.5)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
+
+          Text {
+            readonly property string runs: root.detailEvent
+              ? Events.spanLabel(root.detailEvent) : ""
+            visible: runs !== ""
+            text: runs
+            color: Qt.darker(root.contentForeground, 2.0)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            visible: String(root.detailRecord.recurrence || "") !== ""
+            width: parent.width
+            text: "󰑖  " + String(root.detailRecord.recurrence || "")
+            color: Qt.darker(root.contentForeground, 2.0)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          // The one action in the pane, so it gets a button rather than a
+          // line of text that happens to be clickable.
+          Rectangle {
+            readonly property string url: root.detailEvent
+              ? Events.meetingUrl(root.eventData, root.detailEvent) : ""
+            visible: url !== ""
+            width: parent.width
+            height: Style.space(30)
+            radius: Style.cornerRadius
+            color: joinBigMouse.containsMouse
+              ? Style.hoverFillFor(root.contentForeground, Color.accent)
+              : Qt.rgba(root.contentForeground.r, root.contentForeground.g,
+                        root.contentForeground.b, 0.05)
+            border.width: Style.spacing.hairline
+            border.color: Style.normalBorderFor(root.contentForeground, Color.accent)
+
+            Row {
+              anchors.centerIn: parent
+              spacing: Style.space(6)
+
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "󰕧"
+                color: root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Join meeting"
+                color: root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+              }
+            }
+
+            MouseArea {
+              id: joinBigMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.joinMeeting(parent.url)
+            }
+
+            PanelToolTip {
+              visible: joinBigMouse.containsMouse
+              text: Events.shortUrl(parent.url)
+              fontFamily: root.contentFontFamily
+            }
+          }
+
+          PanelSectionHeader {
+            visible: detailWhere.text !== ""
+            text: "WHERE"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          Text {
+            id: detailWhere
+            width: parent.width
+            visible: text !== ""
+            text: root.detailEvent ? String(root.detailEvent.location || "") : ""
+            color: Qt.darker(root.contentForeground, 1.6)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WrapAnywhere
+          }
+
+          PanelSectionHeader {
+            text: "CALENDAR"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          Repeater {
+            model: root.detailEvent ? root.detailEvent.calendars : []
+
+            Row {
+              required property var modelData
+              spacing: Style.space(6)
+
+              Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Style.space(6)
+                height: width
+                radius: width / 2
+                color: root.detailEvent ? root.detailEvent.color : root.contentForeground
+              }
+
+              Text {
+                text: modelData
+                color: Qt.darker(root.contentForeground, 1.6)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+          }
+
+          PanelSectionHeader {
+            visible: detailOrganizer.text !== ""
+            text: "ORGANISER"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          Text {
+            id: detailOrganizer
+            width: parent.width
+            visible: text !== ""
+            text: {
+              var who = root.detailRecord.organizer
+              return who ? String(who.name || who.email || "") : ""
+            }
+            color: Qt.darker(root.contentForeground, 1.6)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.bodySmall
+            elide: Text.ElideRight
+          }
+
+          PanelSectionHeader {
+            visible: root.detailGuests.length > 0
+            text: root.detailRecord.attendeeCount
+              ? "GUESTS (" + root.detailRecord.attendeeCount + ")"
+              : "GUESTS"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          Repeater {
+            model: root.detailGuests
+
+            Row {
+              required property var modelData
+              width: detailColumn.width
+              spacing: Style.space(6)
+
+              Text {
+                width: Style.space(10)
+                text: Events.attendeeMark(modelData.status)
+                color: Qt.darker(root.contentForeground, 1.7)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Text {
+                width: parent.width - Style.space(16)
+                text: String(modelData.name || modelData.email || "")
+                color: Qt.darker(root.contentForeground,
+                                 String(modelData.status).toUpperCase() === "DECLINED" ? 2.3 : 1.6)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.strikeout: String(modelData.status).toUpperCase() === "DECLINED"
+                elide: Text.ElideRight
+              }
+            }
+          }
+
+          Text {
+            readonly property int more: Events.attendeeOverflow(root.detailRecord)
+            visible: more > 0
+            text: "and " + more + " more"
+            color: Qt.darker(root.contentForeground, 2.2)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            font.italic: true
+          }
+
+          PanelSectionHeader {
+            visible: detailNotes.text !== ""
+            text: "NOTES"
+            foreground: root.contentForeground
+            fontFamily: root.contentFontFamily
+          }
+
+          // Selectable rather than a plain label: this is where the dial-in
+          // number and the meeting id live, and copying them is the point.
+          TextEdit {
+            id: detailNotes
+            width: parent.width
+            visible: text !== ""
+            readOnly: true
+            selectByMouse: true
+            text: String(root.detailRecord.description || "")
+            color: Qt.darker(root.contentForeground, 1.7)
+            selectionColor: Color.accent
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: TextEdit.Wrap
+          }
+
+          Item { width: 1; height: Style.space(8) }
+        }
+      }
+
       Flickable {
         id: calendarScroll
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        // Gives up its right-hand side to the detail pane rather than being
+        // overlapped by it, so both panes scroll on their own.
+        width: root.detailOpen
+          ? Math.max(Style.space(200), parent.width - root.detailPaneWidth)
+          : parent.width
         contentWidth: calendarColumn.width
         contentHeight: calendarColumn.implicitHeight
         clip: true
@@ -1065,7 +1433,7 @@ Panel {
                   tooltipText: "Calendars and agenda settings"
                   foreground: root.contentForeground
                   fontFamily: root.contentFontFamily
-                  onClicked: root.showSettings = true
+                  onClicked: { root.closeDetail(); root.showSettings = true }
                 }
               }
 
@@ -1089,12 +1457,41 @@ Panel {
 
                   readonly property bool past: root.eventIsPast(modelData, root.selectedKey)
 
+                  readonly property bool current: root.detailEvent === modelData
+                  readonly property string joinUrl:
+                    Events.meetingUrl(root.eventData, modelData)
+
                   width: agendaColumn.width
                   height: eventBody.height + Style.space(6)
                   // Over and done with, so it recedes rather than competing
                   // with what is still ahead — the same move the grid makes
-                  // for days outside the month on show.
-                  opacity: past ? 0.45 : 1.0
+                  // for days outside the month on show. The row whose details
+                  // are open is the exception: it is what the reader is
+                  // looking at, past or not.
+                  opacity: (past && !current) ? 0.45 : 1.0
+
+                  // Whole-row hit area, drawn behind everything. The open
+                  // row stays marked so the side panel is visibly about it.
+                  Rectangle {
+                    anchors.fill: parent
+                    anchors.leftMargin: -Style.space(4)
+                    anchors.rightMargin: -Style.space(4)
+                    radius: Style.cornerRadius
+                    color: eventRow.current
+                      ? Style.hoverFillFor(root.contentForeground, Color.accent)
+                      : (rowMouse.containsMouse
+                          ? Qt.rgba(root.contentForeground.r, root.contentForeground.g,
+                                    root.contentForeground.b, 0.05)
+                          : "transparent")
+                  }
+
+                  MouseArea {
+                    id: rowMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.showDetail(eventRow.modelData)
+                  }
 
                   // Calendar color as a spine rather than as text color:
                   // the title has to stay readable at whatever the theme
@@ -1136,6 +1533,7 @@ Panel {
 
                       Text {
                         width: parent.width - timeText.width - Style.space(8)
+                          - (eventRow.joinUrl !== "" ? Style.space(22) : 0)
                         text: eventRow.modelData.title
                         color: root.contentForeground
                         font.family: root.contentFontFamily
@@ -1167,6 +1565,44 @@ Panel {
                       font.pixelSize: Style.font.caption
                       elide: Text.ElideRight
                       maximumLineCount: 1
+                    }
+                  }
+
+                  // Its own target, declared last so it sits above the row's
+                  // hit area: a click here joins the call, a click anywhere
+                  // else opens the details. Only shown when there is a link,
+                  // which also makes it the sign that there is one.
+                  Item {
+                    id: joinButton
+                    visible: eventRow.joinUrl !== ""
+                    width: Style.space(20)
+                    height: Style.space(20)
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+
+                    Text {
+                      anchors.centerIn: parent
+                      text: "󰕧"
+                      color: joinMouse.containsMouse
+                        ? Color.accent
+                        : Qt.darker(root.contentForeground, 1.9)
+                      font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.bodySmall
+                    }
+
+                    MouseArea {
+                      id: joinMouse
+                      anchors.fill: parent
+                      anchors.margins: -Style.space(3)
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.joinMeeting(eventRow.joinUrl)
+                    }
+
+                    PanelToolTip {
+                      visible: joinMouse.containsMouse
+                      text: "Join " + Events.shortUrl(eventRow.joinUrl)
+                      fontFamily: root.contentFontFamily
                     }
                   }
                 }

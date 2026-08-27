@@ -9,7 +9,7 @@
 var MAX_DOTS = 3
 
 function emptyData() {
-  return { days: {}, generated: "", eventCount: 0, calendars: [] }
+  return { days: {}, details: {}, generated: "", eventCount: 0, calendars: [] }
 }
 
 // A malformed or half-written file must never take the calendar down with
@@ -23,6 +23,7 @@ function parse(raw) {
     if (!parsed || typeof parsed !== "object" || !parsed.days) return emptyData()
     return {
       days: parsed.days,
+      details: parseDetails(parsed),
       generated: String(parsed.generated || ""),
       eventCount: Number(parsed.eventCount || 0),
       calendars: parsed.calendars || []
@@ -116,6 +117,68 @@ function hasMoreThanDots(events) {
     if (color !== "" && seen.indexOf(color) === -1) seen.push(color)
   }
   return seen.length > MAX_DOTS
+}
+
+// ---- Details behind the side panel. The events file keeps them in a shared
+//      map so a recurring series stores its invitation text once instead of
+//      once per occurrence; an event points at its record by key.
+
+function parseDetails(parsed) {
+  var table = parsed && parsed.details
+  return (table && typeof table === "object") ? table : {}
+}
+
+function detailFor(data, event) {
+  if (!data || !event) return {}
+  var key = String(event.detail || "")
+  if (key === "") return {}
+  var record = data.details ? data.details[key] : null
+  return record ? record : {}
+}
+
+function hasDetail(data, event) {
+  var record = detailFor(data, event)
+  for (var k in record) return true
+  return false
+}
+
+// A click on this opens it, so the scheme is checked here as well as in the
+// exporter: whatever writes the file is not necessarily the exporter shipped
+// alongside, and a file: or javascript: URL must never reach the opener.
+function meetingUrl(data, event) {
+  var url = String(detailFor(data, event).meetingUrl || "")
+  if (/^https?:\/\/[^\s]+$/.test(url)) return url
+  return ""
+}
+
+// Host and first path segment: enough to recognise the service without
+// pasting a hundred characters of meeting token into the panel.
+function shortUrl(url) {
+  var text = String(url || "")
+  var m = /^https?:\/\/([^\/?#]+)([^?#]*)/.exec(text)
+  if (!m) return text
+  var host = m[1].replace(/^www\./, "")
+  var path = String(m[2] || "").replace(/\/+$/, "")
+  if (path === "" || path === "/") return host
+  var parts = path.split("/").filter(function(p) { return p !== "" })
+  return host + "/" + parts[0] + (parts.length > 1 ? "/\u2026" : "")
+}
+
+// ACCEPTED / DECLINED / TENTATIVE / NEEDS-ACTION as one glyph, so a list of
+// thirty people stays scannable.
+function attendeeMark(status) {
+  switch (String(status || "").toUpperCase()) {
+    case "ACCEPTED": return "\u2713"
+    case "DECLINED": return "\u2715"
+    case "TENTATIVE": return "?"
+    default: return "\u00b7"
+  }
+}
+
+function attendeeOverflow(detail) {
+  var listed = (detail && detail.attendees) ? detail.attendees.length : 0
+  var total = Number((detail && detail.attendeeCount) || listed)
+  return total > listed ? total - listed : 0
 }
 
 // ---- The calendar list behind the settings screen.
@@ -216,6 +279,12 @@ if (typeof module !== "undefined") {
     visibleForDay: visibleForDay,
     dotColors: dotColors,
     hasMoreThanDots: hasMoreThanDots,
+    detailFor: detailFor,
+    hasDetail: hasDetail,
+    meetingUrl: meetingUrl,
+    shortUrl: shortUrl,
+    attendeeMark: attendeeMark,
+    attendeeOverflow: attendeeOverflow,
     calendarRows: calendarRows,
     toggleHidden: toggleHidden,
     pruneHidden: pruneHidden,

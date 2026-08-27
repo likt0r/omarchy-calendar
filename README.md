@@ -4,7 +4,9 @@ The Omarchy clock, with a calendar popup that knows what you have on.
 
 Days carrying appointments get a dot for each calendar involved. Click a day
 and its agenda appears under the grid — times, titles, locations, and which
-calendar each entry came from. Entries that have already ended recede rather
+calendar each entry came from. Click an entry and the popup opens a second
+pane beside it with everything else the invitation carries; entries with a
+video call get a camera icon that joins it directly. Entries that have already ended recede rather
 than shout, and the gear in the agenda header opens a settings screen for
 switching calendars off and deciding what happens to the past. Everything
 else about the clock is unchanged: the same label formats, week numbers,
@@ -36,6 +38,33 @@ appointments — that is what the screenshot above shows.
 Requirements: Omarchy 4.x, Python 3.9+ (`zoneinfo`), and for the bundled
 exporter a Thunderbird profile with calendars. No system packages, no root,
 no network access, nothing to install into `~/.local/bin`.
+
+## Clicking an event
+
+Two targets in one row, so neither has to compromise:
+
+- **The row** opens a pane beside the calendar: when it is, how often it
+  repeats, where, which calendars it came from, who organised it, who
+  accepted and who declined, and the invitation text — selectable, because
+  that is where the dial-in number and the meeting id live. Clicking the same
+  row again closes it, as does the ×.
+- **The camera icon** joins the video call, handed to `xdg-open` so the
+  desktop decides which application that is. The icon appears only when
+  there is a link, which makes it the sign that there is one.
+
+Recognising a join link is deliberately conservative. Real invitations are
+full of URLs — attachments, dial-in pages, unsubscribe footers — so the
+exporter matches known conferencing hosts and otherwise trusts only the
+location field, where a join link is put on purpose. Only `http`/`https`
+ever reaches the opener, checked in the exporter, in `Events.js`, and again
+before the process starts. See
+[`exporters/README.md`](exporters/README.md) for the rules and how to
+extend the host list.
+
+Opening the event in Thunderbird itself is not possible: it offers no
+command line option for it and a single DBus method (`OpenURL`), and its
+extension API does not expose selecting an event in the interface. That
+would take a Thunderbird add-on, not a setting here.
 
 ## Settings
 
