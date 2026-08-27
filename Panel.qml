@@ -259,6 +259,9 @@ Panel {
   readonly property color textSupport: Qt.darker(contentForeground, 1.25)
   readonly property color textCaption: Qt.darker(contentForeground, 1.35)
   readonly property color textQuiet: Qt.darker(contentForeground, 1.45)
+  // The floor is now the grid's alone: the days spilling in from the
+  // neighbouring months, where the contrast is what marks the boundary. The
+  // sections added around upstream's clock stop one step above it.
   readonly property color textFaint: Qt.darker(contentForeground, 1.55)
   readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
 
@@ -458,7 +461,7 @@ Panel {
       anchors.bottom: hint.downwards ? parent.bottom : undefined
       anchors.top: hint.downwards ? undefined : parent.top
       text: hint.downwards ? "󰅀" : "󰅃"
-      color: root.textQuiet
+      color: root.textCaption
       font.family: root.contentFontFamily
       font.pixelSize: Style.font.bodySmall
     }
@@ -656,7 +659,7 @@ Panel {
               ? Events.spanLabel(root.detailEvent) : ""
             visible: runs !== ""
             text: runs
-            color: root.textQuiet
+            color: root.textCaption
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
           }
@@ -665,7 +668,7 @@ Panel {
             visible: String(root.detailRecord.recurrence || "") !== ""
             width: parent.width
             text: "󰑖  " + String(root.detailRecord.recurrence || "")
-            color: root.textQuiet
+            color: root.textCaption
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
             wrapMode: Text.WordWrap
@@ -762,7 +765,7 @@ Panel {
                 ? Events.locationLabel(root.detailEvent,
                     Events.meetingUrl(root.eventData, root.detailEvent))
                 : ""
-              color: root.textCaption
+              color: root.textSupport
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.WrapAnywhere
@@ -791,7 +794,7 @@ Panel {
 
                 Text {
                   text: modelData
-                  color: root.textCaption
+                  color: root.textSupport
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.bodySmall
                 }
@@ -813,7 +816,7 @@ Panel {
                 var who = root.detailRecord.organizer
                 return who ? String(who.name || who.email || "") : ""
               }
-              color: root.textCaption
+              color: root.textSupport
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.bodySmall
               elide: Text.ElideRight
@@ -839,7 +842,7 @@ Panel {
                 Text {
                   width: Style.space(10)
                   text: Events.attendeeMark(modelData.status)
-                  color: root.textCaption
+                  color: root.textSupport
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.caption
                 }
@@ -848,7 +851,7 @@ Panel {
                   width: parent.width - Style.space(16)
                   text: String(modelData.name || modelData.email || "")
                   color: String(modelData.status).toUpperCase() === "DECLINED"
-                    ? root.textFaint : root.textCaption
+                    ? root.textQuiet : root.textSupport
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.bodySmall
                   font.strikeout: String(modelData.status).toUpperCase() === "DECLINED"
@@ -861,7 +864,7 @@ Panel {
               readonly property int more: Events.attendeeOverflow(root.detailRecord)
               visible: more > 0
               text: "and " + more + " more"
-              color: root.textFaint
+              color: root.textQuiet
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.caption
               font.italic: true
@@ -883,7 +886,7 @@ Panel {
               readOnly: true
               selectByMouse: true
               text: String(root.detailRecord.description || "")
-              color: root.textCaption
+              color: root.textSupport
               selectionColor: Color.accent
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.caption
@@ -1543,7 +1546,7 @@ Panel {
                 visible: root.selectedEvents.length > 3
                 anchors.baseline: agendaDateLabel.baseline
                 text: root.selectedEvents.length + " events"
-                color: root.textQuiet
+                color: root.textCaption
                 font.family: root.contentFontFamily
                 font.pixelSize: Style.font.caption
               }
@@ -1554,7 +1557,7 @@ Panel {
                 visible: root.hiddenCount > 0
                 anchors.baseline: agendaDateLabel.baseline
                 text: root.hiddenCount + " hidden"
-                color: root.textFaint
+                color: root.textQuiet
                 font.family: root.contentFontFamily
                 font.pixelSize: Style.font.caption
                 font.italic: true
@@ -1664,7 +1667,7 @@ Panel {
                 Text {
                   visible: root.selectedEvents.length === 0
                   text: "Nothing scheduled"
-                  color: root.textFaint
+                  color: root.textQuiet
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.bodySmall
                   font.italic: true
@@ -1800,7 +1803,7 @@ Panel {
                         x: timeText.width + Style.space(8)
                         width: parent.width - x
                         text: detail
-                        color: root.textFaint
+                        color: root.textQuiet
                         font.family: root.contentFontFamily
                         font.pixelSize: Style.font.caption
                         elide: Text.ElideRight
@@ -1825,7 +1828,7 @@ Panel {
                         text: "󰕧"
                         color: joinMouse.containsMouse
                           ? Color.accent
-                          : root.textQuiet
+                          : root.textCaption
                         font.family: root.contentFontFamily
                         font.pixelSize: Style.font.bodySmall
                       }
@@ -1909,7 +1912,7 @@ Panel {
                     text: "show all"
                     color: showAllMouse.containsMouse
                       ? Color.accent
-                      : root.textQuiet
+                      : root.textCaption
                     font.family: root.contentFontFamily
                     font.pixelSize: Style.font.caption
                     font.underline: showAllMouse.containsMouse
@@ -1931,7 +1934,7 @@ Panel {
                   visible: root.calendarRows.length === 0
                   width: parent.width
                   text: "No calendars loaded yet."
-                  color: root.textFaint
+                  color: root.textQuiet
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.bodySmall
                   font.italic: true
@@ -1973,7 +1976,7 @@ Panel {
                       // A hidden calendar reads like a past entry: still
                       // legible, clearly not in play.
                       color: calendarRow.modelData.hidden
-                        ? root.textFaint
+                        ? root.textQuiet
                         : root.contentForeground
                       font.family: root.contentFontFamily
                       font.pixelSize: Style.font.bodySmall

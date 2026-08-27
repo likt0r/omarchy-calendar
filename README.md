@@ -228,7 +228,9 @@ omarchy plugin validate .
 Dimmed text goes through four named steps on the panel root —
 `textSupport`, `textCaption`, `textQuiet`, `textFaint`, at
 `Qt.darker(foreground, 1.25 … 1.55)` — rather than a factor written out at
-each of thirty-odd call sites. The floor is shallow on purpose: 1.55 is as
+each of thirty-odd call sites. The appointment layer stops at `textQuiet`;
+the floor belongs to the grid alone, where the contrast of the
+neighbouring months' days is what marks the boundary. The floor is shallow on purpose: 1.55 is as
 far as the sibling warthemahl widget dims, and reading darker than that made
 this panel look switched off beside it. Hover and selection use the theme's
 own `hoverFillFor` (0.08) and `selectedFillFor` (0.18) rather than
