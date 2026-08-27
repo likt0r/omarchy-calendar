@@ -1,0 +1,7 @@
+# Nichts an Terminen oder Screenshots landet im Repo.
+*.pyc
+__pycache__/
+events.json
+*.tmp
+*.bak
+*.bak.*

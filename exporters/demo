@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Synthetic exporter: a plausible week of appointments, no calendar needed.
+
+Two uses. It lets someone try the plugin before wiring up a real calendar
+(`"eventSource": "demo"`), and it is what the screenshot in the README is
+taken from -- a preview built from a real calendar would publish whoever
+happens to be in it, meeting links and all.
+
+Dates are relative to today, so the demo always looks current. Standard
+library only, like every exporter here. See README.md for the contract.
+"""
+
+import argparse
+import json
+import os
+from datetime import datetime, timedelta
+
+CALENDARS = [
+    ("Work", "#3C6EBA"),
+    ("Team", "#b6469d"),
+    ("Personal", "#DDCB55"),
+    ("Rooms", "#8855a8"),
+]
+
+# (day offset from Monday of this week, start, end, title, calendar, location)
+TIMED = [
+    (0, "09:30", "09:45", "Standup", 1, ""),
+    (0, "11:00", "12:00", "Sprint planning", 0, "Meeting room 2"),
+    (0, "14:00", "15:00", "1:1 with Sam", 1, ""),
+    (1, "09:30", "09:45", "Standup", 1, ""),
+    (1, "10:00", "11:30", "Design review", 0, "Studio"),
+    (1, "16:00", "17:00", "Reading group", 2, ""),
+    (2, "09:30", "09:45", "Standup", 1, ""),
+    (2, "11:00", "12:00", "Architecture sync", 0, "Room 4"),
+    (2, "13:00", "14:00", "Interview: backend", 0, ""),
+    (2, "15:00", "16:30", "Retrospective", 1, "Meeting room 2"),
+    (3, "09:30", "09:45", "Standup", 1, ""),
+    (3, "09:00", "12:00", "Workshop: onboarding", 0, "Room 1"),
+    (3, "12:30", "13:00", "Lunch & learn", 1, ""),
+    (3, "14:00", "15:00", "Roadmap review", 0, ""),
+    (3, "17:30", "18:30", "Dentist", 2, "Hauptstrasse 12"),
+    (4, "09:30", "09:45", "Standup", 1, ""),
+    (4, "11:00", "12:00", "Demo day", 1, "Auditorium"),
+    (6, "10:00", "13:00", "Cycling", 2, ""),
+    (8, "09:30", "09:45", "Standup", 1, ""),
+    (8, "14:00", "15:00", "Quarterly planning", 0, "Room 4"),
+    (9, "10:00", "11:00", "Vendor call", 0, ""),
+    (10, "09:30", "09:45", "Standup", 1, ""),
+    (11, "13:00", "14:00", "Board prep", 0, ""),
+    (15, "11:00", "12:00", "All hands", 1, "Auditorium"),
+]
+
+# (day offset, span in days, title, calendar)
+ALLDAY = [
+    (4, 1, "Public holiday", 2),
+    (12, 4, "Conference", 0),
+    (18, 2, "Away", 2),
+]
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--out", default=os.path.join(
+        os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+        "omarchy-calendar", "events.json"))
+    ap.add_argument("--print", dest="do_print", action="store_true")
+    # Accepted and ignored, so the demo is a drop-in for the real exporter.
+    ap.add_argument("--back-days", type=int, default=0)
+    ap.add_argument("--forward-days", type=int, default=0)
+    args = ap.parse_args()
+
+    now = datetime.now().astimezone()
+    monday = now.date() - timedelta(days=now.weekday())
+    days = {}
+
+    def add(key, record):
+        days.setdefault(key, []).append(record)
+
+    for offset, start, end, title, cal, location in TIMED:
+        day = monday + timedelta(days=offset)
+        name, color = CALENDARS[cal]
+        record = {
+            "title": title, "allDay": False, "color": color,
+            "calendars": [name], "time": start, "endTime": end,
+            "start": "%sT%s" % (day.isoformat(), start),
+            "end": "%sT%s" % (day.isoformat(), end),
+            "spanDays": 1, "dayIndex": 0,
+        }
+        if location:
+            record["location"] = location
+        add(day.isoformat(), record)
+
+    for offset, span, title, cal in ALLDAY:
+        name, color = CALENDARS[cal]
+        for index in range(span):
+            day = monday + timedelta(days=offset + index)
+            add(day.isoformat(), {
+                "title": title, "allDay": True, "color": color,
+                "calendars": [name], "spanDays": span, "dayIndex": index,
+            })
+
+    # The contract says pre-sorted, all-day first.
+    for bucket in days.values():
+        bucket.sort(key=lambda r: (0 if r["allDay"] else 1, r.get("time", ""),
+                                   r["title"]))
+
+    keys = sorted(days)
+    payload = {
+        "generated": now.isoformat(timespec="seconds"),
+        "windowStart": keys[0] if keys else monday.isoformat(),
+        "windowEnd": keys[-1] if keys else monday.isoformat(),
+        "timezone": str(now.tzinfo),
+        "eventCount": sum(len(v) for v in days.values()),
+        "calendars": [{"name": n, "color": c} for n, c in CALENDARS],
+        "days": days,
+        "warnings": [],
+    }
+
+    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    tmp = args.out + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, separators=(",", ":"))
+    os.replace(tmp, args.out)
+
+    if args.do_print:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print("%d demo events across %d days -> %s"
+              % (payload["eventCount"], len(days), args.out))
+
+
+if __name__ == "__main__":
+    main()

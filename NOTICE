@@ -1,0 +1,16 @@
+This plugin began as a clone of the built-in `omarchy.clock` shell plugin
+(created with `omarchy plugin clone omarchy.clock`) and remains a derivative
+work of it.
+
+`BarWidget.qml`, `Model.js` and the clock, year-progress, life-bar and
+month-grid portions of `Panel.qml` originate from Omarchy:
+
+    Omarchy — https://github.com/basecamp/omarchy
+    MIT License
+    Copyright (c) David Heinemeier Hansson
+
+The MIT license text of the original is identical to the one in LICENSE.
+
+Added by this project: the appointment layer — `Events.js`, the event
+markers in the month grid, the day-selection and agenda section in
+`Panel.qml`, and everything under `exporters/`.

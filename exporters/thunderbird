@@ -1,0 +1,825 @@
+#!/usr/bin/env python3
+"""Thunderbird exporter for the likt0r.calendar Omarchy plugin.
+
+Reads Thunderbird's calendar caches strictly read-only (through a copy, so a
+running Thunderbird is never disturbed and the WAL is replayed correctly),
+expands recurring series, and writes the day-keyed JSON file the panel
+renders. See exporters/README.md for the output contract -- any program that
+writes that shape can replace this one.
+
+Standard library only: no python-dateutil, no root, no network. The RRULE
+engine here covers the subset real calendars use (FREQ, INTERVAL, UNTIL,
+COUNT, BYDAY including ordinals, BYSETPOS, BYMONTH, BYMONTHDAY, WKST) plus
+EXDATE, RDATE and overridden occurrences. tests/exporter-test.py pins it.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import sqlite3
+import sys
+import tempfile
+from datetime import date, datetime, timedelta, timezone
+
+# ---------------------------------------------------------------- Konstanten
+
+# Thunderbird speichert Item-Eigenschaften als Bitmaske in cal_events.flags.
+FLAG_ALLDAY = 8
+FLAG_HAS_RECURRENCE = 16
+FLAG_RECURRENCE_ID_ALLDAY = 512
+
+US = 1_000_000  # Mikrosekunden pro Sekunde: Thunderbirds Zeitbasis
+
+WEEKDAYS = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
+
+# Nicht-IANA-TZIDs, die in echten Einladungen vorkommen (Outlook/Exchange).
+WINDOWS_TZ = {
+    "W. Europe Standard Time": "Europe/Berlin",
+    "Central Europe Standard Time": "Europe/Prague",
+    "Romance Standard Time": "Europe/Paris",
+    "GMT Standard Time": "Europe/London",
+}
+
+# Obergrenze je Serie - Schutz gegen endlose RRULEs ohne UNTIL/COUNT.
+MAX_OCCURRENCES = 2000
+
+
+# ------------------------------------------------------------- Zeitzonen
+
+def load_zoneinfo():
+    from zoneinfo import ZoneInfo
+    return ZoneInfo
+
+
+ZoneInfo = load_zoneinfo()
+_tz_cache = {}
+_tz_unknown = set()
+
+
+def resolve_tz(tzid):
+    """TZID -> tzinfo. Unbekanntes faellt auf die lokale Zone zurueck."""
+    if not tzid or tzid == "floating":
+        return None  # floating: als Wanduhrzeit ohne Zone behandeln
+    if tzid in _tz_cache:
+        return _tz_cache[tzid]
+
+    tz = None
+    name = WINDOWS_TZ.get(tzid, tzid)
+    m = re.fullmatch(r"GMT([+-])(\d{2}):?(\d{2})", tzid)
+    if m:
+        sign = 1 if m.group(1) == "+" else -1
+        tz = timezone(sign * timedelta(hours=int(m.group(2)), minutes=int(m.group(3))))
+    else:
+        try:
+            tz = ZoneInfo(name)
+        except Exception:
+            _tz_unknown.add(tzid)
+            tz = LOCAL_TZ
+
+    _tz_cache[tzid] = tz
+    return tz
+
+
+def detect_local_tz():
+    """Echte IANA-Zone ermitteln. Ein fixer Offset aus astimezone() wuerde
+    den heutigen Sommerzeit-Stand einfrieren und Wintertermine um eine
+    Stunde verschieben."""
+    name = os.environ.get("TZ", "").strip()
+    if not name:
+        try:
+            link = os.readlink("/etc/localtime")
+            if "zoneinfo/" in link:
+                name = link.split("zoneinfo/", 1)[1]
+        except OSError:
+            pass
+    if not name and os.path.exists("/etc/timezone"):
+        with open("/etc/timezone") as fh:
+            name = fh.read().strip()
+    if name:
+        try:
+            return ZoneInfo(name)
+        except Exception:
+            pass
+    return datetime.now().astimezone().tzinfo
+
+
+LOCAL_TZ = detect_local_tz()
+
+
+# ------------------------------------------------------- Thunderbird-Profile
+
+def find_profiles(root):
+    """Alle Profilverzeichnisse mit Kalenderdaten."""
+    out = []
+    if not os.path.isdir(root):
+        return out
+    for entry in sorted(os.listdir(root)):
+        cal_dir = os.path.join(root, entry, "calendar-data")
+        if os.path.isdir(cal_dir) and any(
+            os.path.exists(os.path.join(cal_dir, db))
+            for db in ("cache.sqlite", "local.sqlite")
+        ):
+            out.append(os.path.join(root, entry))
+    return out
+
+
+PREF_RE = re.compile(
+    r'user_pref\("calendar\.registry\.([0-9a-fA-F-]+)\.([^"]+)",\s*(.*?)\);\s*$'
+)
+
+
+def unescape_pref(text):
+    """Nur die Escapes, die prefs.js wirklich schreibt - UTF-8 bleibt intakt."""
+    text = re.sub(r"\\u([0-9a-fA-F]{4})",
+                  lambda m: chr(int(m.group(1), 16)), text)
+    return text.replace('\\"', '"').replace("\\\\", "\\")
+
+
+def parse_pref_value(raw):
+    raw = raw.strip()
+    if raw.startswith('"') and raw.endswith('"'):
+        return unescape_pref(raw[1:-1])
+    if raw == "true":
+        return True
+    if raw == "false":
+        return False
+    try:
+        return int(raw)
+    except ValueError:
+        return raw
+
+
+def read_calendar_registry(profile):
+    """cal_id -> {name, color, enabled} aus prefs.js."""
+    registry = {}
+    prefs = os.path.join(profile, "prefs.js")
+    if not os.path.exists(prefs):
+        return registry
+    with open(prefs, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            m = PREF_RE.match(line)
+            if not m:
+                continue
+            cal_id, key, raw = m.group(1), m.group(2), m.group(3)
+            registry.setdefault(cal_id, {})[key] = parse_pref_value(raw)
+
+    out = {}
+    for cal_id, props in registry.items():
+        out[cal_id] = {
+            "name": props.get("name") or "Kalender",
+            "color": props.get("color") or "#888888",
+            # Ausgeblendete und deaktivierte Kalender bleiben aussen vor,
+            # damit die Bar genau das zeigt, was Thunderbird auch zeigt.
+            "enabled": not props.get("disabled", False)
+            and props.get("calendar-main-in-composite", True) is not False,
+        }
+    return out
+
+
+def snapshot_db(src, tmpdir):
+    """DB samt WAL kopieren und oeffnen - beruehrt das Original nur lesend."""
+    if not os.path.exists(src):
+        return None
+    base = os.path.basename(src)
+    dst = os.path.join(tmpdir, base)
+    try:
+        shutil.copy2(src, dst)
+        for suffix in ("-wal", "-shm"):
+            if os.path.exists(src + suffix):
+                shutil.copy2(src + suffix, dst + suffix)
+    except (OSError, PermissionError):
+        return None
+    try:
+        # Schreibend auf der KOPIE, damit SQLite das WAL einspielen kann.
+        conn = sqlite3.connect(dst)
+        conn.row_factory = sqlite3.Row
+        conn.execute("SELECT 1 FROM cal_events LIMIT 1")
+        return conn
+    except sqlite3.Error:
+        return None
+
+
+# ------------------------------------------------------------ RRULE-Parser
+
+def parse_rrule(text):
+    props = {}
+    for part in text.split(";"):
+        if "=" not in part:
+            continue
+        key, _, value = part.partition("=")
+        props[key.strip().upper()] = value.strip()
+
+    rule = {
+        "freq": props.get("FREQ", "").upper(),
+        "interval": max(1, int(props.get("INTERVAL", 1) or 1)),
+        "count": int(props["COUNT"]) if props.get("COUNT") else None,
+        "until": None,
+        "byday": [],
+        "bymonth": [int(v) for v in props.get("BYMONTH", "").split(",") if v],
+        "bymonthday": [int(v) for v in props.get("BYMONTHDAY", "").split(",") if v],
+        "bysetpos": [int(v) for v in props.get("BYSETPOS", "").split(",") if v],
+        "wkst": WEEKDAYS.get(props.get("WKST", "MO").upper(), 0),
+    }
+
+    for token in props.get("BYDAY", "").split(","):
+        token = token.strip().upper()
+        if not token:
+            continue
+        m = re.fullmatch(r"([+-]?\d+)?(MO|TU|WE|TH|FR|SA|SU)", token)
+        if m:
+            ordinal = int(m.group(1)) if m.group(1) else None
+            rule["byday"].append((ordinal, WEEKDAYS[m.group(2)]))
+
+    if props.get("UNTIL"):
+        rule["until"] = parse_ical_datetime(props["UNTIL"])
+    return rule
+
+
+def parse_ical_datetime(text, tz=None):
+    """iCal-Wert -> (datetime naiv-Wanduhr, is_utc, is_date)."""
+    text = text.strip()
+    if re.fullmatch(r"\d{8}", text):
+        return (datetime.strptime(text, "%Y%m%d"), False, True)
+    m = re.fullmatch(r"(\d{8}T\d{6})(Z?)", text)
+    if m:
+        dt = datetime.strptime(m.group(1), "%Y%m%dT%H%M%S")
+        return (dt, m.group(2) == "Z", False)
+    return None
+
+
+# ------------------------------------------------- Kandidaten je Periode
+
+def month_len(year, month):
+    if month == 12:
+        return 31
+    return (date(year, month + 1, 1) - date(year, month, 1)).days
+
+
+def nth_weekday(year, month, weekday, ordinal):
+    """z.B. ordinal=1, weekday=WE -> erster Mittwoch; -1 -> letzter."""
+    length = month_len(year, month)
+    days = [d for d in range(1, length + 1)
+            if date(year, month, d).weekday() == weekday]
+    if not days:
+        return None
+    idx = ordinal - 1 if ordinal > 0 else len(days) + ordinal
+    return days[idx] if 0 <= idx < len(days) else None
+
+
+def month_candidates(year, month, rule, fallback_day):
+    """Alle Tage eines Monats, die die BY*-Regeln erfuellen."""
+    length = month_len(year, month)
+    days = set()
+
+    if rule["bymonthday"]:
+        for md in rule["bymonthday"]:
+            day = md if md > 0 else length + md + 1
+            if 1 <= day <= length:
+                days.add(day)
+        if rule["byday"]:
+            # Beide gesetzt: Schnittmenge (RFC 5545 - BYDAY filtert dann)
+            allowed = {wd for _, wd in rule["byday"]}
+            days = {d for d in days if date(year, month, d).weekday() in allowed}
+    elif rule["byday"]:
+        for ordinal, weekday in rule["byday"]:
+            if ordinal is None:
+                days.update(d for d in range(1, length + 1)
+                            if date(year, month, d).weekday() == weekday)
+            else:
+                day = nth_weekday(year, month, weekday, ordinal)
+                if day:
+                    days.add(day)
+    else:
+        if fallback_day <= length:
+            days.add(fallback_day)
+
+    return sorted(days)
+
+
+def apply_setpos(days, bysetpos):
+    if not bysetpos:
+        return days
+    out = []
+    for pos in sorted(bysetpos):
+        idx = pos - 1 if pos > 0 else len(days) + pos
+        if 0 <= idx < len(days):
+            out.append(days[idx])
+    return sorted(set(out))
+
+
+def iter_rule_dates(start_wall, rule, window_start, window_end):
+    """Wanduhr-Termine der Serie, aufsteigend. window_* sind naive Daten."""
+    freq = rule["freq"]
+    interval = rule["interval"]
+    emitted = 0
+    guard = 0
+
+    # Without COUNT, the occurrences before the window are of no interest and
+    # only burn through the MAX_OCCURRENCES guard -- a daily series running
+    # since 2014 would exhaust it years before reaching today and vanish from
+    # the calendar entirely. With COUNT the walk has to start at DTSTART,
+    # because the cap counts occurrences from the beginning of the series.
+    def fast_forward(first, step_days):
+        if rule["count"] is not None or step_days <= 0:
+            return first
+        if first >= window_start:
+            return first
+        skip = (window_start - first).days // step_days
+        return first + timedelta(days=skip * step_days)
+
+    if freq == "DAILY":
+        cursor = fast_forward(start_wall.date(), interval)
+        step = timedelta(days=interval)
+        while cursor <= window_end and guard < MAX_OCCURRENCES:
+            guard += 1
+            if rule["bymonth"] and cursor.month not in rule["bymonth"]:
+                cursor += step
+                continue
+            yield cursor
+            emitted += 1
+            if rule["count"] and emitted >= rule["count"]:
+                return
+            cursor += step
+        return
+
+    if freq == "WEEKLY":
+        weekdays = [wd for _, wd in rule["byday"]] or [start_wall.weekday()]
+        weekdays = sorted(set(weekdays))
+        # Wochenanfang gemaess WKST, damit INTERVAL>1 die richtigen Wochen trifft.
+        offset = (start_wall.weekday() - rule["wkst"]) % 7
+        # A week back, so the period holding window_start is never skipped.
+        period = fast_forward(start_wall.date() - timedelta(days=offset),
+                              7 * interval)
+        step = timedelta(days=7 * interval)
+        while period <= window_end and guard < MAX_OCCURRENCES:
+            guard += 1
+            for wd in weekdays:
+                day = period + timedelta(days=(wd - rule["wkst"]) % 7)
+                if day < start_wall.date():
+                    continue
+                if rule["bymonth"] and day.month not in rule["bymonth"]:
+                    continue
+                if day > window_end:
+                    continue
+                yield day
+                emitted += 1
+                if rule["count"] and emitted >= rule["count"]:
+                    return
+            period += step
+        return
+
+    if freq == "MONTHLY":
+        year, month = start_wall.year, start_wall.month
+        while guard < MAX_OCCURRENCES:
+            guard += 1
+            if date(year, month, 1) > window_end + timedelta(days=31):
+                return
+            if not rule["bymonth"] or month in rule["bymonth"]:
+                days = month_candidates(year, month, rule, start_wall.day)
+                for day in apply_setpos(days, rule["bysetpos"]):
+                    occ = date(year, month, day)
+                    if occ < start_wall.date():
+                        continue
+                    if occ <= window_end:
+                        yield occ
+                    emitted += 1
+                    if rule["count"] and emitted >= rule["count"]:
+                        return
+            month += interval
+            year += (month - 1) // 12
+            month = (month - 1) % 12 + 1
+        return
+
+    if freq == "YEARLY":
+        year = start_wall.year
+        while guard < MAX_OCCURRENCES:
+            guard += 1
+            if date(year, 1, 1) > window_end + timedelta(days=366):
+                return
+            months = rule["bymonth"] or [start_wall.month]
+            days = []
+            for month in sorted(months):
+                for day in month_candidates(year, month, rule, start_wall.day):
+                    days.append(date(year, month, day))
+            for occ in apply_setpos(sorted(days), rule["bysetpos"]):
+                if occ < start_wall.date():
+                    continue
+                if occ <= window_end:
+                    yield occ
+                emitted += 1
+                if rule["count"] and emitted >= rule["count"]:
+                    return
+            year += interval
+        return
+
+    # Unbekannte FREQ: nur der Starttermin selbst.
+    yield start_wall.date()
+
+
+# --------------------------------------------------- Ausnahmen / Sondertermine
+
+def collect_exception_dates(lines, keyword, event_tz, allday):
+    """EXDATE-/RDATE-Zeilen -> Menge von UTC-Instants in Mikrosekunden."""
+    out = set()
+    for line in lines:
+        if not line.upper().startswith(keyword):
+            continue
+        head, _, values = line.partition(":")
+        tzid = None
+        m = re.search(r"TZID=([^;:]+)", head, re.IGNORECASE)
+        if m:
+            tzid = m.group(1)
+        is_date_value = "VALUE=DATE" in head.upper()
+
+        for raw in values.split(","):
+            parsed = parse_ical_datetime(raw)
+            if not parsed:
+                continue
+            dt, is_utc, is_date = parsed
+            if is_date or is_date_value or allday:
+                # Ganztags: Mitternacht UTC, so wie Thunderbird speichert.
+                inst = dt.replace(tzinfo=timezone.utc)
+            elif is_utc:
+                inst = dt.replace(tzinfo=timezone.utc)
+            else:
+                tz = resolve_tz(tzid) if tzid else event_tz
+                inst = dt.replace(tzinfo=tz or LOCAL_TZ)
+            out.add(int(inst.timestamp() * US))
+    return out
+
+
+def expand_event(row, recur_lines, overrides, win_start_utc, win_end_utc, warnings):
+    """Ein cal_events-Master -> Liste konkreter Vorkommen."""
+    allday = bool(row["flags"] & FLAG_ALLDAY)
+    tz = resolve_tz(row["event_start_tz"])
+    tz_eff = timezone.utc if allday else (tz or LOCAL_TZ)
+
+    start_us = row["event_start"]
+    end_us = row["event_end"] if row["event_end"] else start_us
+    duration_us = max(0, end_us - start_us)
+
+    start_dt = datetime.fromtimestamp(start_us / US, tz_eff)
+    start_wall = start_dt.replace(tzinfo=None)
+
+    rrules = [l for l in recur_lines if l.upper().startswith("RRULE")]
+    exdates = collect_exception_dates(recur_lines, "EXDATE", tz, allday)
+    rdates = collect_exception_dates(recur_lines, "RDATE", tz, allday)
+
+    win_start_wall = datetime.fromtimestamp(win_start_utc / US, tz_eff).date()
+    win_end_wall = datetime.fromtimestamp(win_end_utc / US, tz_eff).date()
+
+    instants = set()
+    if rrules:
+        for line in rrules:
+            _, _, body = line.partition(":")
+            try:
+                rule = parse_rrule(body)
+            except (ValueError, KeyError):
+                warnings.append("RRULE nicht lesbar: %s" % body.strip())
+                continue
+            until_utc = None
+            if rule["until"]:
+                udt, u_is_utc, u_is_date = rule["until"]
+                if u_is_date:
+                    udt = udt + timedelta(days=1)
+                until_utc = int(
+                    udt.replace(tzinfo=timezone.utc if (u_is_utc or u_is_date) else tz_eff)
+                    .timestamp() * US
+                )
+
+            for occ_date in iter_rule_dates(start_wall, rule, win_start_wall, win_end_wall):
+                wall = datetime.combine(occ_date, start_wall.time())
+                inst = int(wall.replace(tzinfo=tz_eff).timestamp() * US)
+                if until_utc is not None and inst > until_utc:
+                    continue
+                instants.add(inst)
+    else:
+        instants.add(start_us)
+
+    instants |= rdates
+    instants -= exdates
+
+    out = []
+    for inst in sorted(instants):
+        override = overrides.get(inst)
+        if override is not None:
+            if (override["ical_status"] or "").upper() == "CANCELLED":
+                continue
+            o_start = override["event_start"]
+            o_end = override["event_end"] or (o_start + duration_us)
+            o_allday = bool(override["flags"] & FLAG_ALLDAY)
+            out.append({
+                "id": override["id"],
+                "start_us": o_start,
+                "end_us": o_end,
+                "allday": o_allday,
+                "title": override["title"],
+                "tz": override["event_start_tz"],
+                "prop_id": override["id"],
+            })
+            continue
+
+        if inst + duration_us < win_start_utc or inst > win_end_utc:
+            continue
+        out.append({
+            "id": row["id"],
+            "start_us": inst,
+            "end_us": inst + duration_us,
+            "allday": allday,
+            "title": row["title"],
+            "tz": row["event_start_tz"],
+            "prop_id": row["id"],
+        })
+    return out
+
+
+# ------------------------------------------------------------------ Datenbank
+
+def load_from_db(conn, registry, win_start_utc, win_end_utc, warnings):
+    events = []
+
+    # Kalender, die weder deaktiviert noch ausgeblendet sind.
+    def cal_ok(cal_id):
+        info = registry.get(cal_id)
+        return info is not None and info["enabled"]
+
+    # 1) Ueberschriebene Einzeltermine einer Serie, indexiert nach RECURRENCE-ID.
+    overrides = {}
+    for row in conn.execute(
+        "SELECT * FROM cal_events WHERE recurrence_id IS NOT NULL"
+    ):
+        overrides.setdefault((row["cal_id"], row["id"]), {})[row["recurrence_id"]] = row
+
+    # 2) LOCATION nachschlagen.
+    locations = {}
+    for row in conn.execute(
+        "SELECT item_id, value FROM cal_properties WHERE key = 'LOCATION'"
+    ):
+        if row["value"]:
+            locations[row["item_id"]] = row["value"].strip()
+
+    # 3) Wiederholungszeilen je Serie.
+    recur = {}
+    for row in conn.execute("SELECT item_id, cal_id, icalString FROM cal_recurrence"):
+        if row["icalString"]:
+            recur.setdefault((row["cal_id"], row["item_id"]), []).append(
+                row["icalString"].strip()
+            )
+
+    # 4a) Einfache Termine: direkt im Fenster filtern.
+    q = (
+        "SELECT * FROM cal_events "
+        "WHERE recurrence_id IS NULL AND (flags & ?) = 0 "
+        "AND event_end >= ? AND event_start <= ?"
+    )
+    for row in conn.execute(q, (FLAG_HAS_RECURRENCE, win_start_utc, win_end_utc)):
+        if not cal_ok(row["cal_id"]):
+            continue
+        events.append({
+            "id": row["id"],
+            "cal_id": row["cal_id"],
+            "start_us": row["event_start"],
+            "end_us": row["event_end"] or row["event_start"],
+            "allday": bool(row["flags"] & FLAG_ALLDAY),
+            "title": row["title"],
+            "tz": row["event_start_tz"],
+            "location": locations.get(row["id"], ""),
+        })
+
+    # 4b) Serien: unabhaengig vom Startdatum holen und expandieren.
+    q = "SELECT * FROM cal_events WHERE recurrence_id IS NULL AND (flags & ?) != 0"
+    for row in conn.execute(q, (FLAG_HAS_RECURRENCE,)):
+        if not cal_ok(row["cal_id"]):
+            continue
+        key = (row["cal_id"], row["id"])
+        for occ in expand_event(
+            row, recur.get(key, []), overrides.get(key, {}),
+            win_start_utc, win_end_utc, warnings,
+        ):
+            events.append({
+                "id": occ["id"],
+                "cal_id": row["cal_id"],
+                "start_us": occ["start_us"],
+                "end_us": occ["end_us"],
+                "allday": occ["allday"],
+                "title": occ["title"],
+                "tz": occ["tz"],
+                "location": locations.get(occ["prop_id"], ""),
+            })
+
+    # 4c) Verschobene Einzeltermine, deren neue Lage im Fenster liegt, aber
+    #     deren Original-Instant ausserhalb lag: sonst fehlen sie.
+    seen = {(e["cal_id"], e["id"], e["start_us"]) for e in events}
+    for (cal_id, item_id), by_rid in overrides.items():
+        if not cal_ok(cal_id):
+            continue
+        for row in by_rid.values():
+            if (row["ical_status"] or "").upper() == "CANCELLED":
+                continue
+            start_us = row["event_start"]
+            end_us = row["event_end"] or start_us
+            if end_us < win_start_utc or start_us > win_end_utc:
+                continue
+            if (cal_id, row["id"], start_us) in seen:
+                continue
+            events.append({
+                "id": row["id"],
+                "cal_id": cal_id,
+                "start_us": start_us,
+                "end_us": end_us,
+                "allday": bool(row["flags"] & FLAG_ALLDAY),
+                "title": row["title"],
+                "tz": row["event_start_tz"],
+                "location": locations.get(row["id"], ""),
+            })
+
+    return events
+
+
+# ---------------------------------------------------------------- Ausgabe
+
+def build_payload(events, registry, win_start, win_end, warnings):
+    """Termine zu Tagesbuckets in lokaler Zeit gruppieren."""
+    # Derselbe Termin liegt oft in mehreren geteilten Kalendern. Einmal
+    # anzeigen, aber alle Herkunftskalender mitfuehren.
+    merged = {}
+    for ev in events:
+        # Normalised before it becomes the key, not after: keying on the raw
+        # title made "Standup" and "Standup " two entries that then rendered
+        # as one visible duplicate.
+        title = (ev["title"] or "").strip() or "(no title)"
+        key = (title, ev["start_us"], ev["end_us"], ev["allday"])
+        info = registry.get(ev["cal_id"], {})
+        entry = merged.get(key)
+        if entry is None:
+            merged[key] = {
+                "start_us": ev["start_us"],
+                "end_us": ev["end_us"],
+                "allday": ev["allday"],
+                "title": title,
+                "location": ev["location"],
+                "calendars": [info.get("name", "?")],
+                "color": info.get("color", "#888888"),
+            }
+        else:
+            if info.get("name") and info["name"] not in entry["calendars"]:
+                entry["calendars"].append(info["name"])
+            if not entry["location"] and ev["location"]:
+                entry["location"] = ev["location"]
+
+    days = {}
+    for entry in merged.values():
+        if entry["allday"]:
+            # Ganztags kommt als UTC-Mitternacht; Enddatum ist exklusiv.
+            first = datetime.fromtimestamp(
+                entry["start_us"] / US, timezone.utc).date()
+            last = datetime.fromtimestamp(
+                entry["end_us"] / US, timezone.utc).date() - timedelta(days=1)
+            if last < first:
+                last = first
+            start_local = end_local = None
+        else:
+            start_local = datetime.fromtimestamp(entry["start_us"] / US, LOCAL_TZ)
+            end_local = datetime.fromtimestamp(entry["end_us"] / US, LOCAL_TZ)
+            first = start_local.date()
+            last = end_local.date()
+            # Ein Termin, der punktgenau um Mitternacht endet, gehoert
+            # nicht noch in den Folgetag.
+            if last > first and end_local.time() == datetime.min.time():
+                last -= timedelta(days=1)
+
+        span = (last - first).days + 1
+        cursor = first
+        index = 0
+        while cursor <= last:
+            if win_start <= cursor <= win_end:
+                record = {
+                    "title": entry["title"],
+                    "allDay": entry["allday"],
+                    "color": entry["color"],
+                    "calendars": entry["calendars"],
+                    "spanDays": span,
+                    "dayIndex": index,
+                }
+                if entry["location"]:
+                    record["location"] = entry["location"]
+                if not entry["allday"]:
+                    record["start"] = start_local.isoformat(timespec="minutes")
+                    record["end"] = end_local.isoformat(timespec="minutes")
+                    # Nur der erste Tag zeigt die echte Startzeit.
+                    record["time"] = (
+                        start_local.strftime("%H:%M") if index == 0 else ""
+                    )
+                    record["endTime"] = (
+                        end_local.strftime("%H:%M") if cursor == last else ""
+                    )
+                    record["sortKey"] = entry["start_us"] if index == 0 else 0
+                else:
+                    record["sortKey"] = -1  # Ganztags immer oben
+                days.setdefault(cursor.isoformat(), []).append(record)
+            cursor += timedelta(days=1)
+            index += 1
+
+    for bucket in days.values():
+        bucket.sort(key=lambda r: (r["sortKey"], r["title"]))
+        for record in bucket:
+            record.pop("sortKey", None)
+
+    cal_list = [
+        {"name": info["name"], "color": info["color"]}
+        for info in registry.values() if info["enabled"]
+    ]
+    cal_list.sort(key=lambda c: c["name"])
+
+    return {
+        "generated": datetime.now(LOCAL_TZ).isoformat(timespec="seconds"),
+        "windowStart": win_start.isoformat(),
+        "windowEnd": win_end.isoformat(),
+        "timezone": str(LOCAL_TZ),
+        "eventCount": sum(len(v) for v in days.values()),
+        "calendars": cal_list,
+        "days": days,
+        "warnings": warnings,
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Export Thunderbird appointments as JSON for the Omarchy bar."
+    )
+    ap.add_argument("--back-days", type=int, default=45,
+                    help="Tage in die Vergangenheit (Standard: 45)")
+    ap.add_argument("--forward-days", type=int, default=400,
+                    help="Tage in die Zukunft (Standard: 400)")
+    ap.add_argument("--out", default=os.path.join(
+        os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+        "omarchy-calendar", "events.json"))
+    ap.add_argument("--thunderbird-dir",
+                    default=os.path.expanduser("~/.thunderbird"))
+    ap.add_argument("--print", dest="do_print", action="store_true",
+                    help="JSON zusaetzlich auf stdout ausgeben")
+    args = ap.parse_args()
+
+    today = datetime.now(LOCAL_TZ).date()
+    win_start = today - timedelta(days=args.back_days)
+    win_end = today + timedelta(days=args.forward_days)
+    # Grosszuegiger Rand in UTC, damit Randtermine nicht abgeschnitten werden.
+    win_start_utc = int(datetime.combine(
+        win_start, datetime.min.time(), LOCAL_TZ).timestamp() * US) - 2 * 86400 * US
+    win_end_utc = int(datetime.combine(
+        win_end, datetime.max.time(), LOCAL_TZ).timestamp() * US) + 2 * 86400 * US
+
+    warnings = []
+    profiles = find_profiles(args.thunderbird_dir)
+    if not profiles:
+        print("Kein Thunderbird-Profil mit Kalenderdaten gefunden in %s"
+              % args.thunderbird_dir, file=sys.stderr)
+        return 1
+
+    all_events = []
+    registry = {}
+    with tempfile.TemporaryDirectory(prefix="omarchy-cal-") as tmpdir:
+        for profile in profiles:
+            prof_registry = read_calendar_registry(profile)
+            registry.update(prof_registry)
+            for db_name in ("cache.sqlite", "local.sqlite"):
+                src = os.path.join(profile, "calendar-data", db_name)
+                sub = os.path.join(tmpdir, os.path.basename(profile) + "-" + db_name)
+                os.makedirs(sub, exist_ok=True)
+                conn = snapshot_db(src, sub)
+                if conn is None:
+                    continue
+                try:
+                    all_events.extend(load_from_db(
+                        conn, prof_registry, win_start_utc, win_end_utc, warnings))
+                except sqlite3.Error as exc:
+                    warnings.append("%s: %s" % (db_name, exc))
+                finally:
+                    conn.close()
+
+    if _tz_unknown:
+        warnings.append("Unbekannte Zeitzonen (lokal interpretiert): %s"
+                        % ", ".join(sorted(_tz_unknown)))
+
+    payload = build_payload(all_events, registry, win_start, win_end, warnings)
+
+    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    tmp_out = args.out + ".tmp"
+    with open(tmp_out, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, separators=(",", ":"))
+    os.replace(tmp_out, args.out)  # atomar: das Plugin sieht nie eine halbe Datei
+
+    if args.do_print:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print("%d Termine an %d Tagen -> %s"
+              % (payload["eventCount"], len(payload["days"]), args.out))
+        for w in warnings:
+            print("  Hinweis: %s" % w, file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
