@@ -1746,7 +1746,11 @@ Panel {
                           text: eventRow.modelData.allDay
                             ? "all day"
                             : (Events.timeLabel(eventRow.modelData) || "—")
-                          color: root.textCaption
+                          // Full strength, like the day numbers in the grid:
+                          // the column the eye runs down to find "what is at
+                          // two" is not supporting text, it is one of the two
+                          // things a row is actually read for.
+                          color: root.contentForeground
                           font.family: root.contentFontFamily
                           font.pixelSize: Style.font.bodySmall
                           font.italic: eventRow.modelData.allDay
