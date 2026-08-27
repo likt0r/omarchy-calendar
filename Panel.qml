@@ -442,7 +442,7 @@ Panel {
     contentHeight: panel.fittedContentHeight(Math.max(
       headColumn.implicitHeight + Style.space(8) + listColumn.implicitHeight,
       root.detailOpen
-        ? detailHeader.height + Style.space(8) + detailBodyColumn.implicitHeight
+        ? detailHeadColumn.implicitHeight + Style.space(8) + detailBodyColumn.implicitHeight
         : 0))
 
     PanelKeyCatcher {
@@ -491,40 +491,161 @@ Panel {
         // Stays put while the invitation text scrolls underneath: the way
         // out of a pane must not be something you have to scroll back up to
         // find.
-        Item {
-          id: detailHeader
+        // Everything that identifies the event, and the one action on
+        // it, stays put: scrolling to the guest list should not cost you
+        // sight of which event you are reading, or the way into its call.
+        Column {
+          id: detailHeadColumn
           anchors.top: parent.top
-          width: parent.width
-          height: Math.max(detailTitleLabel.height, detailCloseButton.size)
+          width: detailPane.width - Style.space(8)
+          spacing: Style.space(8)
+
+          Item {
+            id: detailHeader
+            width: parent.width
+            height: Math.max(detailTitleLabel.height, detailCloseButton.size)
+
+            Text {
+              id: detailTitleLabel
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: "EVENT"
+              color: Qt.darker(root.contentForeground, 1.4)
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              font.letterSpacing: 1
+              font.bold: true
+            }
+
+            PanelActionButton {
+              id: detailCloseButton
+              anchors.right: parent.right
+              anchors.rightMargin: -Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "󰅖"
+              tooltipText: "Close details"
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              onClicked: root.closeDetail()
+            }
+          }
 
           Text {
-            id: detailTitleLabel
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            text: "EVENT"
-            color: Qt.darker(root.contentForeground, 1.4)
+            width: parent.width
+            text: root.detailEvent ? String(root.detailEvent.title) : ""
+            color: root.contentForeground
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.subtitle
+            font.bold: true
+            wrapMode: Text.WordWrap
+          }
+
+          // Cancelled or tentative changes what the entry means, so it is
+          // stated rather than left to the reader to notice.
+          Text {
+            readonly property string state:
+              String(root.detailRecord.status || "").toUpperCase()
+            visible: state !== ""
+            text: state === "CANCELLED" ? "Cancelled" : "Tentative"
+            color: Color.accent
             font.family: root.contentFontFamily
             font.pixelSize: Style.font.caption
-            font.letterSpacing: 1
             font.bold: true
           }
 
-          PanelActionButton {
-            id: detailCloseButton
-            anchors.right: parent.right
-            anchors.rightMargin: -Style.space(8)
-            anchors.verticalCenter: parent.verticalCenter
-            iconText: "󰅖"
-            tooltipText: "Close details"
-            foreground: root.contentForeground
-            fontFamily: root.contentFontFamily
-            onClicked: root.closeDetail()
+          Text {
+            width: parent.width
+            text: {
+              if (!root.detailEvent) return ""
+              var when = Qt.formatDate(root.selectedDate, "dddd d MMMM")
+              if (root.detailEvent.allDay) return when + "  ·  all day"
+              var span = Events.timeLabel(root.detailEvent)
+              return span === "" ? when : when + "  ·  " + span
+            }
+            color: Qt.darker(root.contentForeground, 1.5)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
           }
+
+          Text {
+            readonly property string runs: root.detailEvent
+              ? Events.spanLabel(root.detailEvent) : ""
+            visible: runs !== ""
+            text: runs
+            color: Qt.darker(root.contentForeground, 2.0)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            visible: String(root.detailRecord.recurrence || "") !== ""
+            width: parent.width
+            text: "󰑖  " + String(root.detailRecord.recurrence || "")
+            color: Qt.darker(root.contentForeground, 2.0)
+            font.family: root.contentFontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
+          // The one action in the pane, so it gets a button rather than a
+          // line of text that happens to be clickable.
+          Rectangle {
+            readonly property string url: root.detailEvent
+              ? Events.meetingUrl(root.eventData, root.detailEvent) : ""
+            visible: url !== ""
+            width: parent.width
+            height: Style.space(30)
+            radius: Style.cornerRadius
+            color: joinBigMouse.containsMouse
+              ? Style.hoverFillFor(root.contentForeground, Color.accent)
+              : Qt.rgba(root.contentForeground.r, root.contentForeground.g,
+                        root.contentForeground.b, 0.05)
+            border.width: Style.spacing.hairline
+            border.color: Style.normalBorderFor(root.contentForeground, Color.accent)
+
+            Row {
+              anchors.centerIn: parent
+              spacing: Style.space(6)
+
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "󰕧"
+                color: root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Join meeting"
+                color: root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+              }
+            }
+
+            MouseArea {
+              id: joinBigMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.joinMeeting(parent.url)
+            }
+
+            PanelToolTip {
+              visible: joinBigMouse.containsMouse
+              text: Events.shortUrl(parent.url)
+              fontFamily: root.contentFontFamily
+            }
+          }
+
         }
 
         Flickable {
           id: detailBodyScroll
-          anchors.top: detailHeader.bottom
+          anchors.top: detailHeadColumn.bottom
           anchors.topMargin: Style.space(8)
           anchors.left: parent.left
           anchors.right: parent.right
@@ -537,119 +658,8 @@ Panel {
 
           Column {
             id: detailBodyColumn
-            width: detailBodyScroll.width - Style.space(8)
+            width: detailPane.width - Style.space(8)
             spacing: Style.space(8)
-
-            Text {
-              width: parent.width
-              text: root.detailEvent ? String(root.detailEvent.title) : ""
-              color: root.contentForeground
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.subtitle
-              font.bold: true
-              wrapMode: Text.WordWrap
-            }
-
-            // Cancelled or tentative changes what the entry means, so it is
-            // stated rather than left to the reader to notice.
-            Text {
-              readonly property string state:
-                String(root.detailRecord.status || "").toUpperCase()
-              visible: state !== ""
-              text: state === "CANCELLED" ? "Cancelled" : "Tentative"
-              color: Color.accent
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
-            }
-
-            Text {
-              width: parent.width
-              text: {
-                if (!root.detailEvent) return ""
-                var when = Qt.formatDate(root.selectedDate, "dddd d MMMM")
-                if (root.detailEvent.allDay) return when + "  ·  all day"
-                var span = Events.timeLabel(root.detailEvent)
-                return span === "" ? when : when + "  ·  " + span
-              }
-              color: Qt.darker(root.contentForeground, 1.5)
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
-            }
-
-            Text {
-              readonly property string runs: root.detailEvent
-                ? Events.spanLabel(root.detailEvent) : ""
-              visible: runs !== ""
-              text: runs
-              color: Qt.darker(root.contentForeground, 2.0)
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Text {
-              visible: String(root.detailRecord.recurrence || "") !== ""
-              width: parent.width
-              text: "󰑖  " + String(root.detailRecord.recurrence || "")
-              color: Qt.darker(root.contentForeground, 2.0)
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
-            // The one action in the pane, so it gets a button rather than a
-            // line of text that happens to be clickable.
-            Rectangle {
-              readonly property string url: root.detailEvent
-                ? Events.meetingUrl(root.eventData, root.detailEvent) : ""
-              visible: url !== ""
-              width: parent.width
-              height: Style.space(30)
-              radius: Style.cornerRadius
-              color: joinBigMouse.containsMouse
-                ? Style.hoverFillFor(root.contentForeground, Color.accent)
-                : Qt.rgba(root.contentForeground.r, root.contentForeground.g,
-                          root.contentForeground.b, 0.05)
-              border.width: Style.spacing.hairline
-              border.color: Style.normalBorderFor(root.contentForeground, Color.accent)
-
-              Row {
-                anchors.centerIn: parent
-                spacing: Style.space(6)
-
-                Text {
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: "󰕧"
-                  color: root.contentForeground
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.bodySmall
-                }
-
-                Text {
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: "Join meeting"
-                  color: root.contentForeground
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.bold: true
-                }
-              }
-
-              MouseArea {
-                id: joinBigMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.joinMeeting(parent.url)
-              }
-
-              PanelToolTip {
-                visible: joinBigMouse.containsMouse
-                text: Events.shortUrl(parent.url)
-                fontFamily: root.contentFontFamily
-              }
-            }
 
             PanelSectionHeader {
               visible: detailWhere.text !== ""

@@ -47,9 +47,11 @@ the gear that filters it — hold their place, and only the list of entries
 beneath them moves. Stepping through a day with sixteen entries never
 scrolls the grid you are stepping through out of view, and the gear stays
 where you last saw it. The settings screen is built the same way: its
-heading and close button hold while the list of calendars scrolls. So does
-the side pane, because the way out of a pane should not be something you
-have to scroll back up to find.
+heading and close button hold while the list of calendars scrolls. The side pane
+keeps its heading, the title, the time, the recurrence and the join button
+in place, so scrolling down to the guest list or the notes never costs you
+sight of which event you are reading — or the way into its call. Only from
+**where** onwards does it move.
 
 Both panes still grow to fit their content first, up to what the screen
 allows. Only past that does anything scroll.
