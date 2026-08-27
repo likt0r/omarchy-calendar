@@ -142,7 +142,7 @@ hot-reload on save:
 | `eventsPath` | `~/.cache/omarchy-calendar/events.json` | Where the events file lives. |
 | `hiddenCalendars` | `[]` | Calendar names to leave out, by the name the events file gives them. A name that no longer exists is dropped on the next write. |
 | `hidePastEvents` | `false` | `true` leaves finished entries out of the agenda instead of dimming them. |
-| `locale` | *system* | Language for the bar label's day and month names, e.g. `de_DE`. Unset follows the system locale. |
+| `locale` | *system* | Language for day and month names throughout the widget, e.g. `de_DE`. Unset follows the system locale. |
 
 Everything the built-in clock understands still applies — `format`,
 `formatAlt`, `verticalFormat`, `weekStartDay`, `birthYear`,
@@ -170,10 +170,20 @@ language.
 The trailing dot on `Do.` and `Aug.` is CLDR's German abbreviation, not a
 stray character; drop the pattern's own dots if the result reads too busy.
 
-Note that this governs the bar label only. The popup's own labels stay
-English, as upstream's clock intended — a localised month name in an
-English word order ("August 27" rather than "27. August") would be worse
-than either language done properly.
+This governs the popup as well: the hero date, the agenda's heading, the
+month rail, the detail pane and the weekday column headings all follow it.
+Order and punctuation are taken from the locale's own long date format
+rather than written out here, so German reads "27. August" and
+"Donnerstag, 27. August" while American English reads "August 27" and
+"Thursday, August 27" — the same code, no per-language patterns.
+
+Unset means the system locale, which is what upstream's clock did. Qt
+supplies the names from its own CLDR data, so a locale need not be
+generated on the system for this to work: `"locale": "de_DE"` gives German
+dates on an `en_US` machine.
+
+The popup's own *words* stay English — "events", "all day", "Nothing
+scheduled", the section headings. Only dates are localised.
 
 ## Where the appointments come from
 

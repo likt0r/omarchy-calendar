@@ -262,6 +262,48 @@ function monthGrid(year, month, weekStart, todayKey) {
   return weeks
 }
 
+// ---- Date patterns derived from the locale rather than written out.
+//      A hardcoded "MMMM d" reads "August 27" in German where the language
+//      wants "27. August", so the order comes from the locale's own long
+//      format ("dddd, MMMM d, yyyy" in en_US, "dddd, d. MMMM yyyy" in de_DE)
+//      with the parts that do not belong taken out.
+
+// Longest first, so "dddd" is gone before "ddd" can match inside it.
+var YEAR_TOKENS = ["yyyy", "yy"]
+var WEEKDAY_TOKENS = ["dddd", "ddd"]
+
+// Separators left stranded once a token is removed. The two ends are not
+// treated alike, and deliberately so: a period can never legitimately open a
+// date format, so a leading one is debris (Hungarian "yyyy. MMMM d., dddd"
+// leaves ". MMMM d." once the year goes). At the other end it belongs to the
+// day — "d." in German and Hungarian alike — and must survive.
+function tidyFormat(pattern) {
+  return String(pattern === undefined || pattern === null ? "" : pattern)
+    .replace(/\s+/g, " ")
+    .replace(/(,\s*){2,}/g, ", ")
+    .replace(/^[\s,.]+/, "")
+    .replace(/[\s,]+$/, "")
+}
+
+function stripFormatTokens(pattern, tokens) {
+  var out = String(pattern === undefined || pattern === null ? "" : pattern)
+  for (var i = 0; i < tokens.length; i++) out = out.split(tokens[i]).join("")
+  return tidyFormat(out)
+}
+
+// "27. August" / "August 27" — the hero, which already sits under a heading
+// that says which year it is.
+function dayMonthFormat(longFormat) {
+  return stripFormatTokens(longFormat, WEEKDAY_TOKENS.concat(YEAR_TOKENS))
+    || "MMMM d"
+}
+
+// "Donnerstag, 27. August" / "Thursday, August 27" — the agenda's heading
+// and the detail pane, where the weekday is the point.
+function weekdayDayMonthFormat(longFormat) {
+  return stripFormatTokens(longFormat, YEAR_TOKENS) || "dddd, MMMM d"
+}
+
 function stepMonth(year, month, delta) {
   var target = new Date(year, Number(month) + Number(delta), 1)
   return { year: target.getFullYear(), month: target.getMonth() }
@@ -288,6 +330,10 @@ if (typeof module !== "undefined") {
     lifeProgressPercent: lifeProgressPercent,
     monthGrid: monthGrid,
     stepMonth: stepMonth,
+    tidyFormat: tidyFormat,
+    stripFormatTokens: stripFormatTokens,
+    dayMonthFormat: dayMonthFormat,
+    weekdayDayMonthFormat: weekdayDayMonthFormat,
     clockFormats: clockFormats,
     clockFormatRing: clockFormatRing,
     nextClockFormat: nextClockFormat,

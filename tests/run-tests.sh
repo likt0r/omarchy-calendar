@@ -23,6 +23,7 @@ run "json contract" python3 -B tests/contract-test.py
 
 if command -v node >/dev/null 2>&1; then
   run "Events.js (node)" node tests/events-test.js
+  run "Model.js (node)" node tests/model-test.js
 else
   printf '%-24sSKIPPED (node not installed)\n' "Events.js (node)"
 fi

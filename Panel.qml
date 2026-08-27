@@ -75,7 +75,31 @@ Panel {
   // The interface is English throughout, so day names are not taken from the
   // system locale. Where the week starts still is: that is a regional
   // convention rather than a translation, and it stays overridable above.
-  readonly property var labelLocale: Qt.locale("en_US")
+  // ---- The language dates are read in. Unset follows the system, which is
+  //      what upstream's clock did; naming one overrides it, because the
+  //      language someone reads dates in is not always the system's.
+  readonly property string localeName: setting("locale", "")
+  readonly property var dateLocale: {
+    var name = String(root.localeName || "")
+    if (name === "") return Qt.locale()
+    // A hand-edited shell.json can name a locale Qt does not know.
+    try { return Qt.locale(name) } catch (e) { return Qt.locale() }
+  }
+
+  // Order and punctuation come from the locale itself, not from a pattern
+  // written out here: "MMMM d" would read "August 27" in German, where the
+  // language wants "27. August".
+  readonly property string longDateFormat:
+    root.dateLocale.dateFormat(Locale.LongFormat)
+  readonly property string dayMonthFormat:
+    Model.dayMonthFormat(root.longDateFormat)
+  readonly property string weekdayDayMonthFormat:
+    Model.weekdayDayMonthFormat(root.longDateFormat)
+
+  // Weekday abbreviations stayed English upstream because the interface is.
+  // With a language named for dates, they follow it.
+  readonly property var labelLocale: root.localeName === ""
+    ? Qt.locale("en_US") : root.dateLocale
   readonly property string nextWeekStartLabel: labelLocale.dayName(Model.toggledWeekStart(weekStart), Locale.LongFormat)
   readonly property var weekdays: Model.weekdayOrder(weekStart)
   readonly property var weeks: Model.monthGrid(viewYear, viewMonth, weekStart, todayKey)
@@ -604,7 +628,8 @@ Panel {
             width: parent.width
             text: {
               if (!root.detailEvent) return ""
-              var when = Qt.formatDate(root.selectedDate, "dddd d MMMM")
+              var when = root.selectedDate.toLocaleDateString(
+                root.dateLocale, root.weekdayDayMonthFormat)
               if (root.detailEvent.allDay) return when + "  ·  all day"
               var span = Events.timeLabel(root.detailEvent)
               return span === "" ? when : when + "  ·  " + span
@@ -936,7 +961,8 @@ Panel {
               Text {
                 id: heroDate
                 anchors.verticalCenter: parent.verticalCenter
-                text: Qt.formatDate(root.today, "MMMM d")
+                text: root.today.toLocaleDateString(
+                  root.dateLocale, root.dayMonthFormat)
                 color: heroMouse.containsMouse
                   ? Style.hoverStateColor(root.contentForeground, Color.accent)
                   : root.contentForeground
@@ -1420,7 +1446,10 @@ Panel {
                 // "MAY 2026" and a "SEPTEMBER 2026".
                 width: Style.space(130)
                 horizontalAlignment: Text.AlignHCenter
-                text: Qt.formatDate(root.viewDate, "MMMM yyyy").toUpperCase()
+                // Month before year in every locale that writes both, so
+                // this one pattern needs no deriving.
+                text: root.viewDate.toLocaleDateString(
+                  root.dateLocale, "MMMM yyyy").toUpperCase()
                 color: Qt.darker(root.contentForeground, 1.4)
                 font.family: root.contentFontFamily
                 font.pixelSize: Style.font.body
@@ -1484,7 +1513,8 @@ Panel {
 
               Text {
                 id: agendaDateLabel
-                text: Qt.formatDate(root.selectedDate, "dddd d MMMM")
+                text: root.selectedDate.toLocaleDateString(
+                  root.dateLocale, root.weekdayDayMonthFormat)
                 color: Qt.darker(root.contentForeground, 1.4)
                 font.family: root.contentFontFamily
                 font.pixelSize: Style.font.body
