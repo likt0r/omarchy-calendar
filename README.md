@@ -225,6 +225,15 @@ python3 exporters/thunderbird --print | head -40
 omarchy plugin validate .
 ```
 
+Dimmed text goes through four named steps on the panel root —
+`textSupport`, `textCaption`, `textQuiet`, `textFaint`, at
+`Qt.darker(foreground, 1.25 … 1.55)` — rather than a factor written out at
+each of thirty-odd call sites. The floor is shallow on purpose: 1.55 is as
+far as the sibling warthemahl widget dims, and reading darker than that made
+this panel look switched off beside it. Hover and selection use the theme's
+own `hoverFillFor` (0.08) and `selectedFillFor` (0.18) rather than
+hand-rolled alphas, so a theme can retune them.
+
 Two things worth knowing:
 
 - **Hot reload covers edits, not new files.** Saving a change to an existing
