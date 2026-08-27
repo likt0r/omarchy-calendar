@@ -106,11 +106,13 @@ The gear at the right of the agenda header opens the settings screen:
   one. An event shared into several calendars only disappears once all of
   them are off. "show all" clears the lot.
 - **Hide past events** — off by default: an entry that has ended stays in
-  the agenda and recedes, along with the dots on days already behind you. It
-  recedes through its colour spine and its supporting line; the time and the
-  title keep full strength, because those are the two things a row is read
-  for and a finished meeting is still one you may need to find. On, it is
-  left out entirely. Either way an event still running counts as current,
+  the agenda and is marked as done: its time is struck through, its colour
+  spine all but gone and its supporting line faded, while the time and the
+  title keep full strength — those are the two things a row is read for, and
+  a finished meeting is still one you may need to find. The strike matters
+  because by evening every entry of the day has passed: with nothing
+  brighter left on screen to compare against, only a mark that stands on its
+  own can still say "over". On, it is left out entirely. Either way an event still running counts as current,
   not past.
 
 ![The settings screen](preview-settings.png)

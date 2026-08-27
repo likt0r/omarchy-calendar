@@ -1725,7 +1725,11 @@ Panel {
                       height: eventBody.height
                       radius: width / 2
                       color: eventRow.modelData.color || root.contentForeground
-                      opacity: (eventRow.past && !eventRow.current) ? 0.4 : 0.95
+                      // The spines form a column down the left edge, so a gap
+                      // in it is read at a glance -- which is where the
+                      // difference between done and ahead now lives, since the
+                      // time and the title keep full strength either way.
+                      opacity: (eventRow.past && !eventRow.current) ? 0.15 : 0.95
                     }
 
                     Column {
@@ -1755,6 +1759,11 @@ Panel {
                           font.family: root.contentFontFamily
                           font.pixelSize: Style.font.bodySmall
                           font.italic: eventRow.modelData.allDay
+                          // An absolute mark, not a relative one: on an evening when every
+                          // entry of the day has passed there is nothing brighter left to
+                          // compare against, so receding cannot say it. A struck-through
+                          // time says "over" on its own, and costs the row no legibility.
+                          font.strikeout: eventRow.past && !eventRow.current
                         }
 
                         Text {
@@ -1800,11 +1809,11 @@ Panel {
                         visible: detail !== ""
                         // Supporting information, so this is where a finished
                         // entry recedes -- not in its time or its title.
-                        opacity: (eventRow.past && !eventRow.current) ? 0.55 : 1.0
+                        opacity: (eventRow.past && !eventRow.current) ? 0.5 : 1.0
                         x: timeText.width + Style.space(8)
                         width: parent.width - x
                         text: detail
-                        color: root.textQuiet
+                        color: root.textCaption
                         font.family: root.contentFontFamily
                         font.pixelSize: Style.font.caption
                         elide: Text.ElideRight
@@ -1830,6 +1839,7 @@ Panel {
                         color: joinMouse.containsMouse
                           ? Color.accent
                           : root.textCaption
+                        opacity: (eventRow.past && !eventRow.current) ? 0.5 : 1.0
                         font.family: root.contentFontFamily
                         font.pixelSize: Style.font.bodySmall
                       }
