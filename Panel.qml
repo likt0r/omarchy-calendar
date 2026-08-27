@@ -1722,18 +1722,29 @@ Panel {
                       // where it is, which calendar it came from, or which
                       // day of a run this is.
                       Text {
+                        // A place and a calendar name look identical set as plain
+                        // text -- "Publix Linus 3.OG - Pascal Garber" gives no clue
+                        // which is which. A glyph in front of each says what kind of
+                        // thing it is without spending a word on it. Kept inside the
+                        // one Text rather than split into a Row, so the line elides.
+                        //   󰍎  md-map_marker     U+F034E  the place
+                        //   󰃮  md-calendar_blank U+F00EE  the calendar it came
+                        //       from; the hero uses md-calendar (U+F00ED), so the two
+                        //       do not read as the same mark
                         readonly property string detail: {
                           var parts = []
                           var span = Events.spanLabel(eventRow.modelData)
+                          // Self-explanatory already ("day 2 of 3"), and a third kind
+                          // of glyph would crowd the line.
                           if (span !== "") parts.push(span)
                           // The join icon already carries the link, so a
                           // location that is nothing but that link says
                           // nothing here.
                           var where = Events.locationLabel(eventRow.modelData,
                                                            eventRow.joinUrl)
-                          if (where !== "") parts.push(where)
+                          if (where !== "") parts.push("󰍎 " + where)
                           var cals = Events.calendarLabel(eventRow.modelData)
-                          if (cals !== "") parts.push(cals)
+                          if (cals !== "") parts.push("󰃮 " + cals)
                           return parts.join("  ·  ")
                         }
                         visible: detail !== ""

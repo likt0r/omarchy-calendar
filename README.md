@@ -3,8 +3,10 @@
 The Omarchy clock, with a calendar popup that knows what you have on.
 
 Days carrying appointments get a dot for each calendar involved. Click a day
-and its agenda appears under the grid — times, titles, locations, and which
-calendar each entry came from. Click an entry and the popup opens a second
+and its agenda appears under the grid — times, titles, and a second line
+that marks what each part of it is: a pin for the place, a calendar for the
+calendar it came from, so "Studio 3" and a colleague's name are not left
+looking like the same kind of thing. Click an entry and the popup opens a second
 pane beside it with everything else the invitation carries; entries with a
 video call get a camera icon that joins it directly. Entries that have already ended recede rather
 than shout, and the gear in the agenda header opens a settings screen for
