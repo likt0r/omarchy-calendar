@@ -105,11 +105,63 @@ Panel {
     return String(Qt.resolvedUrl("exporters/" + name)).replace(/^file:\/\//, "")
   }
 
+  // ---- Visibility, both settings stored on the widget's shell.json entry.
+  //      Calendars are keyed by name because that is the only identity the
+  //      events file carries; a name that no longer exists is pruned rather
+  //      than kept alive forever.
+  readonly property var hiddenCalendars: Events.pruneHidden(
+    Events.normalizeHidden(setting("hiddenCalendars", [])), eventData)
+  readonly property bool hidePastEvents: setting("hidePastEvents", false) === true
+
+  // Re-read every minute off the same clock the bar label uses, so an entry
+  // dims the moment it ends rather than whenever the panel next opens.
+  readonly property string nowHM: Qt.formatDateTime(clock.date, "HH:mm")
+
+  readonly property var visibilityOptions: ({
+    hidden: root.hiddenCalendars,
+    hidePast: root.hidePastEvents,
+    todayKey: root.todayKey,
+    nowHM: root.nowHM
+  })
+
+  // Reading root properties inside the call keeps the bindings that use it
+  // reactive: QML tracks the reads, not the call.
+  function visibleFor(key) {
+    return Events.visibleForDay(root.eventData, key, root.visibilityOptions)
+  }
+
+  function eventIsPast(event, dayKey) {
+    return Events.isPast(event, dayKey, root.todayKey, root.nowHM)
+  }
+
+  property bool showSettings: false
+
+  readonly property var calendarRows: Events.calendarRows(eventData, hiddenCalendars)
+
+  function toggleCalendar(name) {
+    persistSettings({
+      hiddenCalendars: Events.toggleHidden(root.hiddenCalendars, name)
+    })
+  }
+
+  function setHidePastEvents(value) {
+    persistSettings({ hidePastEvents: value === true })
+  }
+
+  function showAllCalendars() {
+    if (root.hiddenCalendars.length === 0) return
+    persistSettings({ hiddenCalendars: [] })
+  }
+
   // The grid was a read-out; the agenda makes it a picker, so one day is
   // always selected. It follows the month rather than staying behind on a
   // date no longer on screen.
   property string selectedKey: todayKey
-  readonly property var selectedEvents: Events.forDay(eventData, selectedKey)
+  readonly property var selectedEvents: root.visibleFor(selectedKey)
+  // How much of the day the filters are keeping back, so a partial day can
+  // say so instead of passing itself off as the whole thing.
+  readonly property int hiddenCount:
+    Events.forDay(eventData, selectedKey).length - selectedEvents.length
   readonly property date selectedDate: root.dateFromKey(selectedKey)
 
   function dateFromKey(key) {
@@ -163,6 +215,9 @@ Panel {
 
   function close() {
     setCenterHoverRevealSuppressed(false)
+    // Reopening should land on the calendar, not on whatever screen the
+    // panel happened to be left on.
+    root.showSettings = false
     // Dismissing the panel mid-edit would otherwise leave the inputs up,
     // waiting behind a closed popup for the next time it opens.
     if (root.editingLife) root.cancelEditingLife()
@@ -635,6 +690,7 @@ Panel {
           //      exactly as tall in February as it is in August.
           Item {
             width: parent.width
+            visible: !root.showSettings
             height: gridColumn.y + gridColumn.height
 
             WheelHandler {
@@ -752,8 +808,12 @@ Panel {
                       required property var modelData
 
                       readonly property bool selected: root.selectedKey === modelData.key
-                      readonly property var dots: Events.dotColors(root.eventData, modelData.key)
-                      readonly property bool overflow: Events.hasMoreThanDots(root.eventData, modelData.key)
+                      readonly property var dayEvents: root.visibleFor(modelData.key)
+                      readonly property var dots: Events.dotColors(dayEvents)
+                      readonly property bool overflow: Events.hasMoreThanDots(dayEvents)
+                      // Days already behind us read quieter, the same way
+                      // days from the neighbouring month do.
+                      readonly property bool past: String(modelData.key) < String(root.todayKey)
 
                       width: root.cellWidth
                       height: root.cellHeight
@@ -810,8 +870,11 @@ Panel {
                             color: modelData
                             // Days spilling in from the neighbouring month
                             // keep their markers, but muted along with the
-                            // date they belong to.
-                            opacity: dayCell.modelData.inMonth ? 0.95 : 0.35
+                            // date they belong to. Past days are muted too,
+                            // just less far.
+                            opacity: !dayCell.modelData.inMonth
+                              ? 0.35
+                              : (dayCell.past ? 0.4 : 0.95)
                           }
                         }
 
@@ -828,7 +891,9 @@ Panel {
                           height: width
                           radius: width / 2
                           color: root.contentForeground
-                          opacity: dayCell.modelData.inMonth ? 0.35 : 0.2
+                          opacity: !dayCell.modelData.inMonth
+                            ? 0.2
+                            : (dayCell.past ? 0.22 : 0.35)
                         }
                       }
 
@@ -865,6 +930,7 @@ Panel {
           //      from "MAY" to "SEPTEMBER".
           Item {
             width: parent.width
+            visible: !root.showSettings
             height: monthNav.height
 
             Item {
@@ -921,6 +987,7 @@ Panel {
           //      put all-day entries first, so this only paints.
           Item {
             width: parent.width
+            visible: !root.showSettings
             height: agendaColumn.y + agendaColumn.height
 
             Rectangle {
@@ -938,28 +1005,61 @@ Panel {
               anchors.horizontalCenter: parent.horizontalCenter
               spacing: Style.space(6)
 
-              Row {
+              Item {
                 width: parent.width
-                spacing: Style.space(8)
+                height: Math.max(agendaHeadRow.height, settingsOpenButton.size)
 
-                Text {
-                  id: agendaDateLabel
-                  text: Qt.formatDate(root.selectedDate, "dddd d MMMM")
-                  color: Qt.darker(root.contentForeground, 1.4)
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.body
-                  font.letterSpacing: 1
+                Row {
+                  id: agendaHeadRow
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(8)
+
+                  Text {
+                    id: agendaDateLabel
+                    text: Qt.formatDate(root.selectedDate, "dddd d MMMM")
+                    color: Qt.darker(root.contentForeground, 1.4)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.body
+                    font.letterSpacing: 1
+                  }
+
+                  Text {
+                    // The count earns its place only once there is more than
+                    // the list already shows at a glance.
+                    visible: root.selectedEvents.length > 3
+                    anchors.baseline: agendaDateLabel.baseline
+                    text: root.selectedEvents.length + " events"
+                    color: Qt.darker(root.contentForeground, 2.0)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  Text {
+                    // Say so when the list is shorter than the day really
+                    // is, rather than quietly showing a partial day.
+                    visible: root.hiddenCount > 0
+                    anchors.baseline: agendaDateLabel.baseline
+                    text: root.hiddenCount + " hidden"
+                    color: Qt.darker(root.contentForeground, 2.2)
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                    font.italic: true
+                  }
                 }
 
-                Text {
-                  // The count earns its place only once there is more than
-                  // the list already shows at a glance.
-                  visible: root.selectedEvents.length > 3
-                  anchors.baseline: agendaDateLabel.baseline
-                  text: root.selectedEvents.length + " events"
-                  color: Qt.darker(root.contentForeground, 2.0)
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.caption
+                PanelActionButton {
+                  id: settingsOpenButton
+                  // Pulled out by its own padding, so the glyph lines up
+                  // with the grid edge rather than its hit box.
+                  anchors.right: parent.right
+                  anchors.rightMargin: -Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  iconText: "󰒓"
+                  tooltipText: "Calendars and agenda settings"
+                  foreground: root.contentForeground
+                  fontFamily: root.contentFontFamily
+                  onClicked: root.showSettings = true
                 }
               }
 
@@ -981,8 +1081,14 @@ Panel {
                   id: eventRow
                   required property var modelData
 
+                  readonly property bool past: root.eventIsPast(modelData, root.selectedKey)
+
                   width: agendaColumn.width
                   height: eventBody.height + Style.space(6)
+                  // Over and done with, so it recedes rather than competing
+                  // with what is still ahead — the same move the grid makes
+                  // for days outside the month on show.
+                  opacity: past ? 0.45 : 1.0
 
                   // Calendar color as a spine rather than as text color:
                   // the title has to stay readable at whatever the theme
@@ -1056,6 +1162,189 @@ Panel {
                       elide: Text.ElideRight
                       maximumLineCount: 1
                     }
+                  }
+                }
+              }
+            }
+          }
+
+          // ---- Settings, in place of the calendar rather than below it: the
+          //      agenda can run to a dozen rows, and a settings block hanging
+          //      off the end of that is a block nobody finds. Omarchy 4.x has
+          //      no host-rendered settings form for plugin widgets (the
+          //      manifest's settingsForm/schema fields are carried but not
+          //      consumed), so the screen lives here, in the panel it
+          //      configures.
+          Item {
+            width: parent.width
+            visible: root.showSettings
+            height: settingsColumn.y + settingsColumn.height
+
+            Rectangle {
+              width: gridColumn.width
+              anchors.horizontalCenter: parent.horizontalCenter
+              height: Style.spacing.hairline
+              color: root.contentForeground
+              opacity: 0.1
+            }
+
+            Column {
+              id: settingsColumn
+              y: Style.space(14)
+              width: gridColumn.width
+              anchors.horizontalCenter: parent.horizontalCenter
+              spacing: Style.space(10)
+
+              Item {
+                width: parent.width
+                height: Math.max(settingsTitle.height, settingsCloseButton.size)
+
+                Text {
+                  id: settingsTitle
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "SETTINGS"
+                  color: Qt.darker(root.contentForeground, 1.4)
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.body
+                  font.letterSpacing: 1
+                }
+
+                PanelActionButton {
+                  id: settingsCloseButton
+                  anchors.right: parent.right
+                  anchors.rightMargin: -Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  iconText: "󰅖"
+                  tooltipText: "Back to the calendar"
+                  foreground: root.contentForeground
+                  fontFamily: root.contentFontFamily
+                  onClicked: root.showSettings = false
+                }
+              }
+
+              PanelSectionHeader {
+                text: "AGENDA"
+                foreground: root.contentForeground
+                fontFamily: root.contentFontFamily
+              }
+
+              Toggle {
+                width: parent.width
+                label: "Hide past events"
+                description: root.hidePastEvents
+                  ? "Entries that have ended are left out of the agenda."
+                  : "Entries that have ended stay, dimmed."
+                checked: root.hidePastEvents
+                foreground: root.contentForeground
+                accent: Color.accent
+                fontFamily: root.contentFontFamily
+                onClicked: root.setHidePastEvents(!root.hidePastEvents)
+              }
+
+              Item {
+                width: parent.width
+                height: calendarsHeader.height
+
+                PanelSectionHeader {
+                  id: calendarsHeader
+                  anchors.left: parent.left
+                  text: "CALENDARS"
+                  foreground: root.contentForeground
+                  fontFamily: root.contentFontFamily
+                }
+
+                // Only offered when it would do something: with nothing
+                // hidden it is a button that cannot act.
+                Text {
+                  id: showAllLink
+                  visible: root.hiddenCalendars.length > 0
+                  anchors.right: parent.right
+                  anchors.baseline: calendarsHeader.baseline
+                  text: "show all"
+                  color: showAllMouse.containsMouse
+                    ? Color.accent
+                    : Qt.darker(root.contentForeground, 1.8)
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                  font.underline: showAllMouse.containsMouse
+
+                  MouseArea {
+                    id: showAllMouse
+                    anchors.fill: parent
+                    anchors.margins: -Style.space(4)
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.showAllCalendars()
+                  }
+                }
+              }
+
+              // The list comes from the events file, so it names exactly the
+              // calendars the exporter actually delivers.
+              Text {
+                visible: root.calendarRows.length === 0
+                width: parent.width
+                text: "No calendars loaded yet."
+                color: Qt.darker(root.contentForeground, 2.2)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.italic: true
+                wrapMode: Text.WordWrap
+              }
+
+              Repeater {
+                model: root.calendarRows
+
+                Item {
+                  id: calendarRow
+                  required property var modelData
+
+                  width: settingsColumn.width
+                  height: Math.max(calendarSwitch.height, calendarName.height)
+                        + Style.space(2)
+
+                  // Same swatch as the agenda's spine and the grid's dots,
+                  // so a colour means one calendar everywhere in the panel.
+                  Rectangle {
+                    id: calendarSwatch
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Style.space(6)
+                    height: width
+                    radius: width / 2
+                    color: calendarRow.modelData.color
+                    opacity: calendarRow.modelData.hidden ? 0.3 : 0.95
+                  }
+
+                  Text {
+                    id: calendarName
+                    anchors.left: calendarSwatch.right
+                    anchors.leftMargin: Style.space(8)
+                    anchors.right: calendarSwitch.left
+                    anchors.rightMargin: Style.space(8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: calendarRow.modelData.name
+                    // A hidden calendar reads like a past entry: still
+                    // legible, clearly not in play.
+                    color: calendarRow.modelData.hidden
+                      ? Qt.darker(root.contentForeground, 2.1)
+                      : root.contentForeground
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    elide: Text.ElideRight
+                  }
+
+                  // Checked means shown, not hidden: the switch answers the
+                  // question the row asks, which is "is this calendar on?"
+                  ToggleSwitch {
+                    id: calendarSwitch
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    checked: !calendarRow.modelData.hidden
+                    foreground: root.contentForeground
+                    accent: Color.accent
+                    onToggled: root.toggleCalendar(calendarRow.modelData.name)
                   }
                 }
               }

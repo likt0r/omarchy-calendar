@@ -4,9 +4,12 @@ The Omarchy clock, with a calendar popup that knows what you have on.
 
 Days carrying appointments get a dot for each calendar involved. Click a day
 and its agenda appears under the grid — times, titles, locations, and which
-calendar each entry came from. Everything else about the clock is unchanged:
-the same label formats, week numbers, week-start toggle, year and life bars,
-and the same keyboard and scroll-wheel month stepping.
+calendar each entry came from. Entries that have already ended recede rather
+than shout, and the gear in the agenda header opens a settings screen for
+switching calendars off and deciding what happens to the past. Everything
+else about the clock is unchanged: the same label formats, week numbers,
+week-start toggle, year and life bars, and the same keyboard and
+scroll-wheel month stepping.
 
 ![The calendar popup with a day's agenda](preview.png)
 
@@ -34,6 +37,31 @@ Requirements: Omarchy 4.x, Python 3.9+ (`zoneinfo`), and for the bundled
 exporter a Thunderbird profile with calendars. No system packages, no root,
 no network access, nothing to install into `~/.local/bin`.
 
+## Settings
+
+The gear at the right of the agenda header opens the settings screen:
+
+- **Calendars** — a switch per calendar, so a shared room-booking or
+  colleague's calendar can be dropped from the popup without touching
+  Thunderbird. Switching one off removes it from the agenda *and* from the
+  dots under the dates, and the agenda header says how many entries the
+  filters are holding back rather than passing off a partial day as the whole
+  one. An event shared into several calendars only disappears once all of
+  them are off. "show all" clears the lot.
+- **Hide past events** — off by default: an entry that has ended stays in
+  the agenda, dimmed, along with the dots on days already behind you. On, it
+  is left out entirely. Either way an event still running counts as current,
+  not past.
+
+![The settings screen](preview-settings.png)
+
+Both are stored on the widget's entry in `shell.json`, so they survive
+updates and can also be set by hand or with `omarchy bar set`.
+
+Omarchy 4.x renders no settings form for plugin widgets — the manifest's
+`settingsForm` and `schema` fields are carried through but not consumed — so
+the screen lives inside the panel it configures.
+
 ## Configuration
 
 Settings live on the widget's entry in `~/.config/omarchy/shell.json` and
@@ -44,7 +72,9 @@ hot-reload on save:
   "id": "likt0r.calendar",
   "format": "dddd HH:mm",
   "eventSource": "thunderbird",
-  "eventsPath": "~/.cache/omarchy-calendar/events.json"
+  "eventsPath": "~/.cache/omarchy-calendar/events.json",
+  "hiddenCalendars": ["Room bookings"],
+  "hidePastEvents": false
 }
 ```
 
@@ -52,6 +82,8 @@ hot-reload on save:
 |---|---|---|
 | `eventSource` | `thunderbird` | Exporter to run, by file name under `exporters/`. `demo` for synthetic data, `none` when something else writes the file and the panel only reads. |
 | `eventsPath` | `~/.cache/omarchy-calendar/events.json` | Where the events file lives. |
+| `hiddenCalendars` | `[]` | Calendar names to leave out, by the name the events file gives them. A name that no longer exists is dropped on the next write. |
+| `hidePastEvents` | `false` | `true` leaves finished entries out of the agenda instead of dimming them. |
 
 Everything the built-in clock understands still applies — `format`,
 `formatAlt`, `verticalFormat`, `weekStartDay`, `birthYear`,

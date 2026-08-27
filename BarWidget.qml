@@ -127,7 +127,7 @@ BarWidget {
   }
 
   IpcHandler {
-    target: "omarchy.clock"
+    target: "likt0r.calendar"
 
     function refresh(): void { root.broadcast("refresh") }
     function cycleFormat(): void { root.cycleFormat() }
