@@ -444,7 +444,9 @@ Panel {
             Row {
               id: heroRow
               anchors.horizontalCenter: parent.horizontalCenter
-              spacing: Style.space(22)
+              // Scaled with the two sizes below, so the pair keeps its
+              // proportions rather than drifting apart.
+              spacing: Style.space(15)
 
               Text {
                 // Baseline-aligned, not center-aligned: "July 26" carries a
@@ -458,8 +460,10 @@ Panel {
                 font.family: root.contentFontFamily
                 // Decorative, and deliberately outside the Style.font.*
                 // scale. Sized so the glyph reads at the cap height of the
-                // date beside it rather than towering over it.
-                font.pixelSize: 48
+                // date beside it rather than towering over it -- two thirds
+                // of what upstream used, which left the date shouting over
+                // the grid it introduces.
+                font.pixelSize: 32
               }
 
               Text {
@@ -470,7 +474,9 @@ Panel {
                   ? Style.hoverStateColor(root.contentForeground, Color.accent)
                   : root.contentForeground
                 font.family: root.contentFontFamily
-                font.pixelSize: 52
+                // Two thirds of upstream's 52; kept in step with the glyph
+                // and the row spacing above.
+                font.pixelSize: 35
                 font.bold: true
               }
             }

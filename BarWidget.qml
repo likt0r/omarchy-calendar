@@ -52,8 +52,23 @@ BarWidget {
       root.bar.shell.updateEntryInline(root.moduleName, entry)
   }
 
+  // The panel's own wording is English by design, but the bar label is a
+  // date rather than interface text, and the language it reads in need not
+  // be the system's. Unset means the system locale, which is what
+  // Qt.formatDateTime used before this existed -- so the default renders
+  // exactly as it always did.
+  readonly property string localeName: setting("locale", "")
+  readonly property var dateLocale: {
+    var name = String(root.localeName || "")
+    if (name === "") return Qt.locale()
+    // A hand-edited shell.json can name a locale Qt does not know.
+    try { return Qt.locale(name) } catch (e) { return Qt.locale() }
+  }
+
   function formatted(date) {
-    return Qt.formatDateTime(date, activeFormat.replace(/ww/g, Model.isoWeekLiteral(date.getFullYear(), date.getMonth(), date.getDate())))
+    var pattern = activeFormat.replace(/ww/g, Model.isoWeekLiteral(
+      date.getFullYear(), date.getMonth(), date.getDate()))
+    return date.toLocaleString(root.dateLocale, pattern)
   }
 
   // ---- Calendar popup. Shape contract for shell.summon/hide/toggle

@@ -74,7 +74,8 @@ hot-reload on save:
   "eventSource": "thunderbird",
   "eventsPath": "~/.cache/omarchy-calendar/events.json",
   "hiddenCalendars": ["Room bookings"],
-  "hidePastEvents": false
+  "hidePastEvents": false,
+  "locale": "de_DE"
 }
 ```
 
@@ -84,10 +85,38 @@ hot-reload on save:
 | `eventsPath` | `~/.cache/omarchy-calendar/events.json` | Where the events file lives. |
 | `hiddenCalendars` | `[]` | Calendar names to leave out, by the name the events file gives them. A name that no longer exists is dropped on the next write. |
 | `hidePastEvents` | `false` | `true` leaves finished entries out of the agenda instead of dimming them. |
+| `locale` | *system* | Language for the bar label's day and month names, e.g. `de_DE`. Unset follows the system locale. |
 
 Everything the built-in clock understands still applies — `format`,
 `formatAlt`, `verticalFormat`, `weekStartDay`, `birthYear`,
 `lifeExpectancy`.
+
+### The language of the bar label
+
+The label is a date, not interface text, so `locale` sets the language its
+day and month names are rendered in — independently of the system locale,
+which is often English on a machine whose owner reads dates in something
+else. `format` and `locale` belong together: pick a pattern that suits the
+language.
+
+```json
+{ "id": "likt0r.calendar", "locale": "de_DE", "format": "ddd dd.MM. HH:mm" }
+```
+
+| `format` | with `de_DE` |
+|---|---|
+| `ddd dd.MM. HH:mm` | `Do. 27.08. 14:00` |
+| `ddd dd.MM HH:mm` | `Do. 27.08 14:00` |
+| `ddd d.M. HH:mm` | `Do. 27.8. 14:00` |
+| `dddd, d. MMMM yyyy` | `Donnerstag, 27. August 2026` |
+
+The trailing dot on `Do.` and `Aug.` is CLDR's German abbreviation, not a
+stray character; drop the pattern's own dots if the result reads too busy.
+
+Note that this governs the bar label only. The popup's own labels stay
+English, as upstream's clock intended — a localised month name in an
+English word order ("August 27" rather than "27. August") would be worse
+than either language done properly.
 
 ## Where the appointments come from
 
