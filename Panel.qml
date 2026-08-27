@@ -1688,12 +1688,10 @@ Panel {
 
                     width: agendaColumn.width
                     height: eventBody.height + Style.space(6)
-                    // Over and done with, so it recedes rather than competing
-                    // with what is still ahead — the same move the grid makes
-                    // for days outside the month on show. The row whose details
-                    // are open is the exception: it is what the reader is
-                    // looking at, past or not.
-                    opacity: (past && !current) ? 0.6 : 1.0
+                    // Dimming the whole row took the time and the title with it --
+                    // the two things it is read for -- and no colour could win that
+                    // back, because opacity is applied after it. What has passed
+                    // recedes through its spine and its supporting line instead.
 
                     // Whole-row hit area, drawn behind everything. The open
                     // row stays marked so the side panel is visibly about it.
@@ -1727,7 +1725,7 @@ Panel {
                       height: eventBody.height
                       radius: width / 2
                       color: eventRow.modelData.color || root.contentForeground
-                      opacity: 0.95
+                      opacity: (eventRow.past && !eventRow.current) ? 0.4 : 0.95
                     }
 
                     Column {
@@ -1800,6 +1798,9 @@ Panel {
                           return parts.join("  ·  ")
                         }
                         visible: detail !== ""
+                        // Supporting information, so this is where a finished
+                        // entry recedes -- not in its time or its title.
+                        opacity: (eventRow.past && !eventRow.current) ? 0.55 : 1.0
                         x: timeText.width + Style.space(8)
                         width: parent.width - x
                         text: detail
