@@ -54,7 +54,10 @@ sight of which event you are reading — or the way into its call. Only from
 **where** onwards does it move.
 
 Both panes still grow to fit their content first, up to what the screen
-allows. Only past that does anything scroll.
+allows. Only past that does anything scroll — and then a small chevron
+appears at whichever edge there is more to reach, over a short fade so it
+never sits on half a clipped line. No arrow means you are looking at all of
+it.
 
 ## Clicking an event
 

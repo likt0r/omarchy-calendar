@@ -382,6 +382,53 @@ Panel {
     return String(labelLocale.dayName(weekday, Locale.ShortFormat)).toUpperCase()
   }
 
+  // ---- The mark that a list goes on past its edge: a chevron over a short
+  //      fade, so it never sits on top of a half-clipped line. Shown only at
+  //      an edge that can actually be moved towards, and only while there is
+  //      something to reach — a permanent arrow would say nothing.
+  component ScrollHint: Item {
+    id: hint
+
+    required property Flickable view
+    // false marks the top edge (content above), true the bottom.
+    property bool downwards: true
+
+    readonly property bool available: hint.view
+      && hint.view.contentHeight > hint.view.height + 1
+      && (hint.downwards
+            ? hint.view.contentY < hint.view.contentHeight - hint.view.height - 1
+            : hint.view.contentY > 1)
+
+    height: Style.space(20)
+    opacity: available ? 1 : 0
+    visible: opacity > 0
+    Behavior on opacity { NumberAnimation { duration: 120 } }
+
+    Rectangle {
+      anchors.fill: parent
+      gradient: Gradient {
+        GradientStop {
+          position: 0.0
+          color: hint.downwards ? "transparent" : Color.popups.background
+        }
+        GradientStop {
+          position: 1.0
+          color: hint.downwards ? Color.popups.background : "transparent"
+        }
+      }
+    }
+
+    Text {
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.bottom: hint.downwards ? parent.bottom : undefined
+      anchors.top: hint.downwards ? undefined : parent.top
+      text: hint.downwards ? "󰅀" : "󰅃"
+      color: Qt.darker(root.contentForeground, 1.8)
+      font.family: root.contentFontFamily
+      font.pixelSize: Style.font.bodySmall
+    }
+  }
+
   SystemClock {
     id: clock
     precision: SystemClock.Minutes
@@ -803,6 +850,22 @@ Panel {
 
             Item { width: 1; height: Style.space(8) }
           }
+        }
+
+        ScrollHint {
+          view: detailBodyScroll
+          downwards: false
+          anchors.left: detailBodyScroll.left
+          anchors.right: detailBodyScroll.right
+          anchors.top: detailBodyScroll.top
+        }
+
+        ScrollHint {
+          view: detailBodyScroll
+          downwards: true
+          anchors.left: detailBodyScroll.left
+          anchors.right: detailBodyScroll.right
+          anchors.bottom: detailBodyScroll.bottom
         }
       }
 
@@ -1864,6 +1927,22 @@ Panel {
               }
             }
           }
+        }
+
+        ScrollHint {
+          view: listScroll
+          downwards: false
+          anchors.left: listScroll.left
+          anchors.right: listScroll.right
+          anchors.top: listScroll.top
+        }
+
+        ScrollHint {
+          view: listScroll
+          downwards: true
+          anchors.left: listScroll.left
+          anchors.right: listScroll.right
+          anchors.bottom: listScroll.bottom
         }
       }
     }
