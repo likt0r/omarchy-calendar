@@ -1688,10 +1688,13 @@ Panel {
 
                     width: agendaColumn.width
                     height: eventBody.height + Style.space(6)
-                    // Dimming the whole row took the time and the title with it --
-                    // the two things it is read for -- and no colour could win that
-                    // back, because opacity is applied after it. What has passed
-                    // recedes through its spine and its supporting line instead.
+                    // What has passed recedes as a whole, but only so far: at 0.6 the
+                    // time and the title -- the two things a row is read for -- fell
+                    // below the supporting text of a row still ahead, and no colour
+                    // could win that back, because opacity is applied after it. At
+                    // 0.75 they stay plainly legible while the row still stands back,
+                    // and the struck-through time says the rest.
+                    opacity: (past && !current) ? 0.75 : 1.0
 
                     // Whole-row hit area, drawn behind everything. The open
                     // row stays marked so the side panel is visibly about it.
@@ -1807,9 +1810,6 @@ Panel {
                           return parts.join("  ·  ")
                         }
                         visible: detail !== ""
-                        // Supporting information, so this is where a finished
-                        // entry recedes -- not in its time or its title.
-                        opacity: (eventRow.past && !eventRow.current) ? 0.5 : 1.0
                         x: timeText.width + Style.space(8)
                         width: parent.width - x
                         text: detail
@@ -1839,7 +1839,6 @@ Panel {
                         color: joinMouse.containsMouse
                           ? Color.accent
                           : root.textCaption
-                        opacity: (eventRow.past && !eventRow.current) ? 0.5 : 1.0
                         font.family: root.contentFontFamily
                         font.pixelSize: Style.font.bodySmall
                       }
