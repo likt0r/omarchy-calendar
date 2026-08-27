@@ -1762,11 +1762,6 @@ Panel {
                           font.family: root.contentFontFamily
                           font.pixelSize: Style.font.bodySmall
                           font.italic: eventRow.modelData.allDay
-                          // An absolute mark, not a relative one: on an evening when every
-                          // entry of the day has passed there is nothing brighter left to
-                          // compare against, so receding cannot say it. A struck-through
-                          // time says "over" on its own, and costs the row no legibility.
-                          font.strikeout: eventRow.past && !eventRow.current
                         }
 
                         Text {
