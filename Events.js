@@ -151,6 +151,55 @@ function meetingUrl(data, event) {
   return ""
 }
 
+// Conferencing boilerplate that gets pasted into the location field next to
+// the link. Once the join icon carries the link, what is left of a line like
+// this is not a place, and the code it names is already in the link's own
+// query string. Extend the list rather than the logic.
+var ACCESS_MARKERS = ["meeting-id", "meeting id", "meetingid",
+                      "konferenz-id", "conference id",
+                      "kenncode", "kenncode", "passcode", "password",
+                      "access code", "zugangscode", "pin:"]
+
+function collapseSpace(text) {
+  return String(text === undefined || text === null ? "" : text)
+    .replace(/\s+/g, " ").replace(/^ +| +$/g, "")
+}
+
+// Separators that only earned their place while the link was still there.
+function trimSeparators(text) {
+  return String(text || "")
+    .replace(/^[\s/,;:·|\u2014\u2013-]+/, "")
+    .replace(/[\s/,;:·|\u2014\u2013-]+$/, "")
+}
+
+function isAccessDetail(text) {
+  var lower = String(text || "").toLowerCase()
+  for (var i = 0; i < ACCESS_MARKERS.length; i++)
+    if (lower.indexOf(ACCESS_MARKERS[i]) === 0) return true
+  return false
+}
+
+// The location with the join link taken out of it. Very often the location
+// *is* the link, and then this is empty and nothing should be printed: the
+// camera icon already offers it. A room name sharing the field with a link
+// survives; the link's own access details do not.
+function locationLabel(event, url) {
+  var text = String((event && event.location) || "")
+  var link = String(url || "")
+  if (text === "" || link === "") return collapseSpace(text)
+  var at = text.indexOf(link)
+  if (at === -1) return collapseSpace(text)
+
+  var out = []
+  var sides = [text.slice(0, at), text.slice(at + link.length)]
+  for (var i = 0; i < sides.length; i++) {
+    var piece = trimSeparators(collapseSpace(sides[i]))
+    if (piece === "" || isAccessDetail(piece)) continue
+    out.push(piece)
+  }
+  return out.join("  \u00b7  ")
+}
+
 // Host and first path segment: enough to recognise the service without
 // pasting a hundred characters of meeting token into the panel.
 function shortUrl(url) {
@@ -283,6 +332,9 @@ if (typeof module !== "undefined") {
     hasDetail: hasDetail,
     meetingUrl: meetingUrl,
     shortUrl: shortUrl,
+    collapseSpace: collapseSpace,
+    isAccessDetail: isAccessDetail,
+    locationLabel: locationLabel,
     attendeeMark: attendeeMark,
     attendeeOverflow: attendeeOverflow,
     calendarRows: calendarRows,

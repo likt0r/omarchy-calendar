@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "likt0r.calendar",
   "name": "Calendar",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "author": "Benjamin Werner",
   "license": "MIT",
   "description": "Replaces the Omarchy clock with one whose calendar popup shows your actual appointments. Days carrying events are marked with a dot per calendar, and clicking a day lists that day's agenda under the grid. Clicking an entry opens a pane beside the calendar with the full invitation -- when, how often, where, organiser, who accepted, and the notes; entries with a video call get an icon that joins it. A settings screen switches individual calendars off and decides whether finished entries are dimmed or dropped. Events come from a pluggable exporter that writes a documented JSON file; a Thunderbird exporter ships with the plugin and reads its calendar caches read-only, expanding recurring series, exceptions and moved occurrences itself.",

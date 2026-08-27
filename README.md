@@ -72,6 +72,12 @@ Two targets in one row, so neither has to compromise:
   desktop decides which application that is. The icon appears only when
   there is a link, which makes it the sign that there is one.
 
+Since the icon carries the link, a location that is nothing but that link is
+not printed a second time — neither in the agenda nor as the pane's **where**.
+A room name sharing the field with a link survives ("Studio 3 ·
+https://…" reads as "Studio 3"); the link's own access details do not, since
+the code is in the link anyway.
+
 Recognising a join link is deliberately conservative. Real invitations are
 full of URLs — attachments, dial-in pages, unsubscribe footers — so the
 exporter matches known conferencing hosts and otherwise trusts only the

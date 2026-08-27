@@ -719,7 +719,12 @@ Panel {
               id: detailWhere
               width: parent.width
               visible: text !== ""
-              text: root.detailEvent ? String(root.detailEvent.location || "") : ""
+              // Same reasoning as in the agenda: with a Join button right
+              // above, repeating the link as an address is noise.
+              text: root.detailEvent
+                ? Events.locationLabel(root.detailEvent,
+                    Events.meetingUrl(root.eventData, root.detailEvent))
+                : ""
               color: Qt.darker(root.contentForeground, 1.6)
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.bodySmall
@@ -1721,8 +1726,12 @@ Panel {
                           var parts = []
                           var span = Events.spanLabel(eventRow.modelData)
                           if (span !== "") parts.push(span)
-                          if (eventRow.modelData.location)
-                            parts.push(String(eventRow.modelData.location))
+                          // The join icon already carries the link, so a
+                          // location that is nothing but that link says
+                          // nothing here.
+                          var where = Events.locationLabel(eventRow.modelData,
+                                                           eventRow.joinUrl)
+                          if (where !== "") parts.push(where)
                           var cals = Events.calendarLabel(eventRow.modelData)
                           if (cals !== "") parts.push(cals)
                           return parts.join("  ·  ")

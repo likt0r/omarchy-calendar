@@ -271,6 +271,53 @@ check('attendeeOverflow: no attendees', Events.attendeeOverflow({}), 0)
 check('attendeeOverflow: count missing', 
   Events.attendeeOverflow({ attendees: [1, 2] }), 0)
 
+// ----------------------------------------------------------- location label
+
+const loc = (l, u) => Events.locationLabel({ location: l }, u)
+
+// The common case by far: the location field is the join link, and the
+// camera icon already offers it.
+check('location: nothing but the link disappears',
+  loc('https://zoom.us/j/1', 'https://zoom.us/j/1'), '')
+// A room name sharing the field with the link is the reason not to just
+// hide any location that contains a URL.
+check('location: room name survives the link',
+  loc('Woodstein / https://bbb.x/rooms/a/join', 'https://bbb.x/rooms/a/join'),
+  'Woodstein')
+check('location: room name after the link',
+  loc('https://bbb.x/rooms/a/join / Woodstein', 'https://bbb.x/rooms/a/join'),
+  'Woodstein')
+check('location: text on both sides is joined',
+  loc('Publix — https://zoom.us/j/1 — 3rd floor', 'https://zoom.us/j/1'),
+  'Publix  \u00b7  3rd floor')
+// Access details are not a place, and the code is in the link anyway.
+check('location: meeting id boilerplate dropped',
+  loc('https://zoom.us/j/9\nMeeting-ID: 908 743 6782', 'https://zoom.us/j/9'), '')
+check('location: passcode boilerplate dropped',
+  loc('https://zoom.us/j/9\nKenncode: 7U1KV', 'https://zoom.us/j/9'), '')
+check('location: english passcode dropped',
+  loc('https://zoom.us/j/9 Passcode: abc', 'https://zoom.us/j/9'), '')
+// Untouched when there is no link to take out.
+check('location: plain room kept', loc('Meeting room 2', ''), 'Meeting room 2')
+check('location: link that is not the meeting link kept',
+  loc('https://maps.example/x', 'https://zoom.us/j/1'), 'https://maps.example/x')
+check('location: newlines collapsed',
+  loc('Room 3\n  Building A', ''), 'Room 3 Building A')
+check('location: empty', loc('', 'https://zoom.us/j/1'), '')
+check('location: missing', Events.locationLabel({}, 'https://zoom.us/j/1'), '')
+check('location: null event', Events.locationLabel(null, ''), '')
+
+check('collapseSpace: runs and edges', Events.collapseSpace('  a \n b  '), 'a b')
+check('collapseSpace: null', Events.collapseSpace(null), '')
+checkTrue('isAccessDetail: german id', Events.isAccessDetail('Meeting-ID: 1'))
+checkTrue('isAccessDetail: german code', Events.isAccessDetail('Kenncode: x'))
+checkTrue('isAccessDetail: case folded', Events.isAccessDetail('PASSCODE: x'))
+checkTrue('isAccessDetail: a room is not access data',
+  !Events.isAccessDetail('Woodstein'))
+// Only a leading marker counts, so a room named after a code word survives.
+checkTrue('isAccessDetail: marker must lead',
+  !Events.isAccessDetail('Room next to the passcode board'))
+
 // ------------------------------------------------------- calendar settings
 
 const withCals = Events.parse(JSON.stringify({
