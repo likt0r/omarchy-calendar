@@ -42,11 +42,14 @@ no network access, nothing to install into `~/.local/bin`.
 ## What stays put
 
 Neither pane scrolls as a whole. In the calendar the date, the year rail,
-the grid and the month rail hold their place and only the list beneath them
-moves, so stepping through a day with sixteen entries never scrolls the grid
-you are stepping through out of view. In the side pane the header and its
-close button hold the same way: the way out of a pane should not be
-something you have to scroll back up to find.
+the grid, the month rail and the agenda's own heading — the day it names and
+the gear that filters it — hold their place, and only the list of entries
+beneath them moves. Stepping through a day with sixteen entries never
+scrolls the grid you are stepping through out of view, and the gear stays
+where you last saw it. The settings screen is built the same way: its
+heading and close button hold while the list of calendars scrolls. So does
+the side pane, because the way out of a pane should not be something you
+have to scroll back up to find.
 
 Both panes still grow to fit their content first, up to what the screen
 allows. Only past that does anything scroll.

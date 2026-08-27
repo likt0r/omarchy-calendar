@@ -222,7 +222,6 @@ Panel {
     root.eventData = Events.parse(raw)
   }
 
-
   // Guarded so the widget renders before the bar is injected (the bar-widget
   // contract instantiates it bare).
   readonly property color contentForeground: bar ? bar.foreground : Color.foreground
@@ -1376,6 +1375,131 @@ Panel {
             }
           }
 
+          // ---- The agenda heading, held in place with the grid: the date it
+          //      names and the gear that filters the list below are no use
+          //      once they have scrolled off the top.
+          Item {
+            width: parent.width
+            visible: !root.showSettings
+            height: agendaHeadBox.y + agendaHeadBox.height
+
+            Rectangle {
+              width: gridColumn.width
+              anchors.horizontalCenter: parent.horizontalCenter
+              height: Style.spacing.hairline
+              color: root.contentForeground
+              opacity: 0.1
+            }
+
+          Item {
+            id: agendaHeadBox
+            y: Style.space(14)
+            width: gridColumn.width
+            anchors.horizontalCenter: parent.horizontalCenter
+            height: Math.max(agendaHeadRow.height, settingsOpenButton.size)
+
+            Row {
+              id: agendaHeadRow
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(8)
+
+              Text {
+                id: agendaDateLabel
+                text: Qt.formatDate(root.selectedDate, "dddd d MMMM")
+                color: Qt.darker(root.contentForeground, 1.4)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.body
+                font.letterSpacing: 1
+              }
+
+              Text {
+                // The count earns its place only once there is more than
+                // the list already shows at a glance.
+                visible: root.selectedEvents.length > 3
+                anchors.baseline: agendaDateLabel.baseline
+                text: root.selectedEvents.length + " events"
+                color: Qt.darker(root.contentForeground, 2.0)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Text {
+                // Say so when the list is shorter than the day really
+                // is, rather than quietly showing a partial day.
+                visible: root.hiddenCount > 0
+                anchors.baseline: agendaDateLabel.baseline
+                text: root.hiddenCount + " hidden"
+                color: Qt.darker(root.contentForeground, 2.2)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+                font.italic: true
+              }
+            }
+
+            PanelActionButton {
+              id: settingsOpenButton
+              // Pulled out by its own padding, so the glyph lines up
+              // with the grid edge rather than its hit box.
+              anchors.right: parent.right
+              anchors.rightMargin: -Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "󰒓"
+              tooltipText: "Calendars and agenda settings"
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              onClicked: { root.closeDetail(); root.showSettings = true }
+            }
+          }
+          }
+
+          // ---- The settings heading, sticky for the same reason: the way back
+          //      to the calendar must not scroll away under a long list of
+          //      calendars.
+          Item {
+            width: parent.width
+            visible: root.showSettings
+            height: settingsHeadBox.y + settingsHeadBox.height
+
+            Rectangle {
+              width: gridColumn.width
+              anchors.horizontalCenter: parent.horizontalCenter
+              height: Style.spacing.hairline
+              color: root.contentForeground
+              opacity: 0.1
+            }
+
+          Item {
+            id: settingsHeadBox
+            y: Style.space(14)
+            width: gridColumn.width
+            anchors.horizontalCenter: parent.horizontalCenter
+            height: Math.max(settingsTitle.height, settingsCloseButton.size)
+
+            Text {
+              id: settingsTitle
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: "SETTINGS"
+              color: Qt.darker(root.contentForeground, 1.4)
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.body
+              font.letterSpacing: 1
+            }
+
+            PanelActionButton {
+              id: settingsCloseButton
+              anchors.right: parent.right
+              anchors.rightMargin: -Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: "󰅖"
+              tooltipText: "Back to the calendar"
+              foreground: root.contentForeground
+              fontFamily: root.contentFontFamily
+              onClicked: root.showSettings = false
+            }
+          }
+          }
         }
 
         Flickable {
@@ -1395,88 +1519,21 @@ Panel {
             id: listColumn
             width: Math.max(listScroll.width, gridColumn.width)
             spacing: Style.space(8)
-            // ---- Agenda for the selected day. Sits below the month rail so
-            //      the chevrons stay glued to the grid they drive, and reads
-            //      as the panel's closing block: a rule, the date, then the
-            //      day itself. The exporter has already sorted the list and
-            //      put all-day entries first, so this only paints.
+            // ---- The selected day itself. Its rule and heading sit in the
+            //      sticky part above; what is left here is the list, which is
+            //      the only thing that should move. The exporter has already
+            //      sorted it and put all-day entries first, so this only
+            //      paints.
             Item {
               width: parent.width
               visible: !root.showSettings
-              height: agendaColumn.y + agendaColumn.height
-
-              Rectangle {
-                width: gridColumn.width
-                anchors.horizontalCenter: parent.horizontalCenter
-                height: Style.spacing.hairline
-                color: root.contentForeground
-                opacity: 0.1
-              }
+              height: agendaColumn.height
 
               Column {
                 id: agendaColumn
-                y: Style.space(14)
                 width: gridColumn.width
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: Style.space(6)
-
-                Item {
-                  width: parent.width
-                  height: Math.max(agendaHeadRow.height, settingsOpenButton.size)
-
-                  Row {
-                    id: agendaHeadRow
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(8)
-
-                    Text {
-                      id: agendaDateLabel
-                      text: Qt.formatDate(root.selectedDate, "dddd d MMMM")
-                      color: Qt.darker(root.contentForeground, 1.4)
-                      font.family: root.contentFontFamily
-                      font.pixelSize: Style.font.body
-                      font.letterSpacing: 1
-                    }
-
-                    Text {
-                      // The count earns its place only once there is more than
-                      // the list already shows at a glance.
-                      visible: root.selectedEvents.length > 3
-                      anchors.baseline: agendaDateLabel.baseline
-                      text: root.selectedEvents.length + " events"
-                      color: Qt.darker(root.contentForeground, 2.0)
-                      font.family: root.contentFontFamily
-                      font.pixelSize: Style.font.caption
-                    }
-
-                    Text {
-                      // Say so when the list is shorter than the day really
-                      // is, rather than quietly showing a partial day.
-                      visible: root.hiddenCount > 0
-                      anchors.baseline: agendaDateLabel.baseline
-                      text: root.hiddenCount + " hidden"
-                      color: Qt.darker(root.contentForeground, 2.2)
-                      font.family: root.contentFontFamily
-                      font.pixelSize: Style.font.caption
-                      font.italic: true
-                    }
-                  }
-
-                  PanelActionButton {
-                    id: settingsOpenButton
-                    // Pulled out by its own padding, so the glyph lines up
-                    // with the grid edge rather than its hit box.
-                    anchors.right: parent.right
-                    anchors.rightMargin: -Style.space(8)
-                    anchors.verticalCenter: parent.verticalCenter
-                    iconText: "󰒓"
-                    tooltipText: "Calendars and agenda settings"
-                    foreground: root.contentForeground
-                    fontFamily: root.contentFontFamily
-                    onClicked: { root.closeDetail(); root.showSettings = true }
-                  }
-                }
 
                 // A quiet line rather than an empty gap: a blank block below
                 // the rule would read as something failing to load.
@@ -1661,50 +1718,13 @@ Panel {
             Item {
               width: parent.width
               visible: root.showSettings
-              height: settingsColumn.y + settingsColumn.height
-
-              Rectangle {
-                width: gridColumn.width
-                anchors.horizontalCenter: parent.horizontalCenter
-                height: Style.spacing.hairline
-                color: root.contentForeground
-                opacity: 0.1
-              }
+              height: settingsColumn.height
 
               Column {
                 id: settingsColumn
-                y: Style.space(14)
                 width: gridColumn.width
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: Style.space(10)
-
-                Item {
-                  width: parent.width
-                  height: Math.max(settingsTitle.height, settingsCloseButton.size)
-
-                  Text {
-                    id: settingsTitle
-                    anchors.left: parent.left
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "SETTINGS"
-                    color: Qt.darker(root.contentForeground, 1.4)
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.body
-                    font.letterSpacing: 1
-                  }
-
-                  PanelActionButton {
-                    id: settingsCloseButton
-                    anchors.right: parent.right
-                    anchors.rightMargin: -Style.space(8)
-                    anchors.verticalCenter: parent.verticalCenter
-                    iconText: "󰅖"
-                    tooltipText: "Back to the calendar"
-                    foreground: root.contentForeground
-                    fontFamily: root.contentFontFamily
-                    onClicked: root.showSettings = false
-                  }
-                }
 
                 PanelSectionHeader {
                   text: "AGENDA"
