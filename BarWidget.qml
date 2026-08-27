@@ -59,10 +59,9 @@ BarWidget {
   // exactly as it always did.
   readonly property string localeName: setting("locale", "")
   readonly property var dateLocale: {
-    var name = String(root.localeName || "")
-    if (name === "") return Qt.locale()
-    // A hand-edited shell.json can name a locale Qt does not know.
-    try { return Qt.locale(name) } catch (e) { return Qt.locale() }
+    // Resolved the same way as in the panel, from the same helper.
+    var name = Model.localeName(root.localeName, Qt.locale().name)
+    try { return Qt.locale(name) } catch (e) { return Qt.locale("en_US") }
   }
 
   function formatted(date) {

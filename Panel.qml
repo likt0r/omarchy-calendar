@@ -80,10 +80,10 @@ Panel {
   //      language someone reads dates in is not always the system's.
   readonly property string localeName: setting("locale", "")
   readonly property var dateLocale: {
-    var name = String(root.localeName || "")
-    if (name === "") return Qt.locale()
-    // A hand-edited shell.json can name a locale Qt does not know.
-    try { return Qt.locale(name) } catch (e) { return Qt.locale() }
+    // A hand-edited shell.json can name a locale Qt does not know, and a
+    // machine can have no usable locale at all.
+    var name = Model.localeName(root.localeName, Qt.locale().name)
+    try { return Qt.locale(name) } catch (e) { return Qt.locale("en_US") }
   }
 
   // Order and punctuation come from the locale itself, not from a pattern
@@ -96,10 +96,11 @@ Panel {
   readonly property string weekdayDayMonthFormat:
     Model.weekdayDayMonthFormat(root.longDateFormat)
 
-  // Weekday abbreviations stayed English upstream because the interface is.
-  // With a language named for dates, they follow it.
-  readonly property var labelLocale: root.localeName === ""
-    ? Qt.locale("en_US") : root.dateLocale
+  // Upstream pinned the weekday abbreviations to English because its
+  // interface is. They follow the dates now: a column headed SUN MON TUE
+  // above a heading reading "Donnerstag, 27. August" is two languages in one
+  // glance, and the abbreviation of a weekday is not interface wording.
+  readonly property var labelLocale: root.dateLocale
   readonly property string nextWeekStartLabel: labelLocale.dayName(Model.toggledWeekStart(weekStart), Locale.LongFormat)
   readonly property var weekdays: Model.weekdayOrder(weekStart)
   readonly property var weeks: Model.monthGrid(viewYear, viewMonth, weekStart, todayKey)

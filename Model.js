@@ -262,6 +262,19 @@ function monthGrid(year, month, weekStart, todayKey) {
   return weeks
 }
 
+// Which locale names the dates. An explicit setting wins; otherwise the
+// system's, which is the point of not having to configure anything. English
+// is the fallback rather than Qt's C locale, whose dates are bare numbers.
+function localeName(configured, systemName) {
+  var chosen = String(configured === undefined || configured === null
+                      ? "" : configured).replace(/^\s+|\s+$/g, "")
+  if (chosen !== "") return chosen
+  var system = String(systemName === undefined || systemName === null
+                      ? "" : systemName).replace(/^\s+|\s+$/g, "")
+  if (system === "" || system === "C" || system === "POSIX") return "en_US"
+  return system
+}
+
 // ---- Date patterns derived from the locale rather than written out.
 //      A hardcoded "MMMM d" reads "August 27" in German where the language
 //      wants "27. August", so the order comes from the locale's own long
@@ -330,6 +343,7 @@ if (typeof module !== "undefined") {
     lifeProgressPercent: lifeProgressPercent,
     monthGrid: monthGrid,
     stepMonth: stepMonth,
+    localeName: localeName,
     tidyFormat: tidyFormat,
     stripFormatTokens: stripFormatTokens,
     dayMonthFormat: dayMonthFormat,

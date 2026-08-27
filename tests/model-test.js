@@ -20,6 +20,24 @@ function check(label, got, want) {
   if (g !== w) failures.push(`${label}\n     got:  ${g}\n     want: ${w}`)
 }
 
+// ---------------------------------------------------------------- localeName
+
+check('locale: explicit setting wins',
+  Model.localeName('de_DE', 'en_US'), 'de_DE')
+// Nothing configured is the normal case: follow the machine.
+check('locale: unset follows the system',
+  Model.localeName('', 'de_DE'), 'de_DE')
+check('locale: null follows the system',
+  Model.localeName(null, 'fr_FR'), 'fr_FR')
+check('locale: whitespace is not a setting',
+  Model.localeName('   ', 'de_DE'), 'de_DE')
+check('locale: setting is trimmed', Model.localeName('  de_DE ', 'en_US'), 'de_DE')
+// English rather than Qt's C locale, whose dates are bare numbers.
+check('locale: C falls back to english', Model.localeName('', 'C'), 'en_US')
+check('locale: POSIX falls back to english', Model.localeName('', 'POSIX'), 'en_US')
+check('locale: no system locale falls back', Model.localeName('', ''), 'en_US')
+check('locale: neither', Model.localeName(null, null), 'en_US')
+
 // ---------------------------------------------------------------- tidyFormat
 
 check('tidy: whitespace collapsed', Model.tidyFormat('d.   MMMM'), 'd. MMMM')

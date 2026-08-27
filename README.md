@@ -177,10 +177,15 @@ rather than written out here, so German reads "27. August" and
 "Donnerstag, 27. August" while American English reads "August 27" and
 "Thursday, August 27" — the same code, no per-language patterns.
 
-Unset means the system locale, which is what upstream's clock did. Qt
-supplies the names from its own CLDR data, so a locale need not be
-generated on the system for this to work: `"locale": "de_DE"` gives German
-dates on an `en_US` machine.
+Leave it unset and the widget follows the machine, which is the point of
+not having to configure anything: set the system to German and the calendar
+is German, with no setting to remember. English is the fallback, used when
+nothing names a locale or the system reports only `C`, because Qt's C locale
+renders dates as bare numbers.
+
+Naming one overrides the system, and needs nothing generated to work: Qt
+supplies day and month names from its own CLDR data, so `"locale": "de_DE"`
+gives German dates on an `en_US` machine.
 
 The popup's own *words* stay English — "events", "all day", "Nothing
 scheduled", the section headings. Only dates are localised.
