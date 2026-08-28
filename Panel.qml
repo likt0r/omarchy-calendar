@@ -1762,7 +1762,12 @@ Panel {
                       Events.meetingUrl(root.eventData, modelData)
 
                     width: agendaColumn.width
-                    height: eventBody.height + Style.space(6)
+                    // The slack around the text has to be spent on both ends,
+                    // or the fill behind a row sits low under content pinned
+                    // to its top edge. One token, used twice, so the two can
+                    // not drift apart at another spacing scale.
+                    readonly property int padding: Style.space(3)
+                    height: eventBody.height + padding * 2
                     // What has passed recedes as a whole, but only so far: at 0.6 the
                     // time and the title -- the two things a row is read for -- fell
                     // below the supporting text of a row still ahead, and no colour
@@ -1811,7 +1816,7 @@ Panel {
                     // makes of a pale calendar.
                     Rectangle {
                       x: 0
-                      y: Style.space(1)
+                      y: eventBody.y
                       width: Style.space(2)
                       height: eventBody.height
                       radius: width / 2
@@ -1827,6 +1832,7 @@ Panel {
                     Column {
                       id: eventBody
                       x: root.agendaBodyInset
+                      y: eventRow.padding
                       width: parent.width - x
                       spacing: Style.space(1)
 
@@ -1919,7 +1925,9 @@ Panel {
                       width: Style.space(20)
                       height: Style.space(20)
                       anchors.right: parent.right
-                      anchors.top: parent.top
+                      // On the line it belongs to rather than on the row's
+                      // top edge, which is now padding.
+                      y: eventBody.y + (timeText.height - height) / 2
 
                       Text {
                         anchors.centerIn: parent
