@@ -159,6 +159,15 @@ Panel {
     return Events.isPast(event, dayKey, root.todayKey, root.nowHM)
   }
 
+  function eventIsOngoing(event, dayKey) {
+    return Events.isOngoing(event, dayKey, root.todayKey, root.nowHM)
+  }
+
+  // -1 while the line should stay away; otherwise the index of the entry it
+  // sits above, which may be one past the last one when the day is over.
+  readonly property int nowMarkerIndex: Events.nowMarkerIndex(
+    root.selectedEvents, root.selectedKey, root.todayKey, root.nowHM)
+
   property bool showSettings: false
 
   // ---- The side panel. Holding the event itself rather than an index: the
@@ -256,6 +265,10 @@ Panel {
   //      dims its one secondary line to 1.55 and goes no further, and this
   //      panel reading darker than that made it look switched off next to
   //      it. Four steps is what the content actually distinguishes.
+  // One step *up* from the base, and the only thing in the panel that goes
+  // there: the row that is happening right now. The ladder below darkens to
+  // quieten, this is the same move in the other direction.
+  readonly property color textVivid: Qt.lighter(contentForeground, 1.25)
   readonly property color textSupport: Qt.darker(contentForeground, 1.25)
   readonly property color textCaption: Qt.darker(contentForeground, 1.35)
   readonly property color textQuiet: Qt.darker(contentForeground, 1.45)
@@ -264,6 +277,17 @@ Panel {
   // sections added around upstream's clock stop one step above it.
   readonly property color textFaint: Qt.darker(contentForeground, 1.55)
   readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
+
+  // The wash behind a running row. Between the kit's hover (0.08) and its
+  // selection (0.18), and drawn under both, so hovering or opening the row
+  // still registers as a step up rather than washing out against it.
+  readonly property color runningFill: Util.alpha(contentForeground, 0.12)
+
+  // The agenda's fixed columns: the inset its body starts at, and the width
+  // of the time column every title lines up behind. The now-line has to land
+  // on the same grid, which is what stops these being magic numbers.
+  readonly property int agendaBodyInset: Style.space(10)
+  readonly property int agendaTimeWidth: Style.space(86)
 
   readonly property int cellWidth: Style.space(52)
   readonly property int cellHeight: Style.space(34)
@@ -464,6 +488,37 @@ Panel {
       color: root.textCaption
       font.family: root.contentFontFamily
       font.pixelSize: Style.font.bodySmall
+    }
+  }
+
+  // ---- Where the clock falls in today's agenda: the time in the agenda's
+  //      own time column, and a hairline running on through the titles. Only
+  //      drawn while nothing is running -- a lit row says the same thing
+  //      better, and both at once would be two marks for one fact.
+  component NowLine: Item {
+    id: nowLine
+
+    height: Style.space(16)
+
+    Text {
+      id: nowLineLabel
+      x: root.agendaBodyInset
+      anchors.verticalCenter: parent.verticalCenter
+      text: root.nowHM
+      color: Color.accent
+      font.family: root.contentFontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    Rectangle {
+      x: root.agendaBodyInset + root.agendaTimeWidth
+      width: Math.max(0, nowLine.width - x)
+      anchors.verticalCenter: parent.verticalCenter
+      height: Style.spacing.hairline
+      color: Color.accent
+      // Quieter than its label: the line is there to carry the eye across,
+      // not to divide the day in two.
+      opacity: 0.45
     }
   }
 
@@ -1676,11 +1731,31 @@ Panel {
                 Repeater {
                   model: root.selectedEvents
 
+                  // A wrapper rather than the row itself, so the now-line can
+                  // take its place in the list without the row having to make
+                  // room for it. Column skips it while it is hidden, which is
+                  // most of the time.
+                  Column {
+                    id: agendaEntry
+                    required property var modelData
+                    required property int index
+
+                    width: agendaColumn.width
+                    spacing: Style.space(6)
+
+                    NowLine {
+                      width: agendaEntry.width
+                      visible: agendaEntry.index === root.nowMarkerIndex
+                    }
+
                   Item {
                     id: eventRow
-                    required property var modelData
+                    // Kept as a property of its own so everything below still
+                    // reads its event off the row it belongs to.
+                    readonly property var modelData: agendaEntry.modelData
 
                     readonly property bool past: root.eventIsPast(modelData, root.selectedKey)
+                    readonly property bool ongoing: root.eventIsOngoing(modelData, root.selectedKey)
 
                     readonly property bool current: root.detailEvent === modelData
                     readonly property string joinUrl:
@@ -1696,8 +1771,21 @@ Panel {
                     // and the struck-through time says the rest.
                     opacity: (past && !current) ? 0.75 : 1.0
 
-                    // Whole-row hit area, drawn behind everything. The open
-                    // row stays marked so the side panel is visibly about it.
+                    // Lit from behind while it runs. Declared first so it
+                    // stays under the state fill: hovering or opening a
+                    // running row then still reads as a step up from here.
+                    Rectangle {
+                      anchors.fill: parent
+                      anchors.leftMargin: -Style.space(4)
+                      anchors.rightMargin: -Style.space(4)
+                      radius: Style.cornerRadius
+                      visible: eventRow.ongoing
+                      color: root.runningFill
+                    }
+
+                    // Whole-row hit area, drawn behind everything else. The
+                    // open row stays marked so the side panel is visibly
+                    // about it.
                     Rectangle {
                       anchors.fill: parent
                       anchors.leftMargin: -Style.space(4)
@@ -1732,12 +1820,13 @@ Panel {
                       // in it is read at a glance -- which is where the
                       // difference between done and ahead now lives, since the
                       // time and the title keep full strength either way.
-                      opacity: (eventRow.past && !eventRow.current) ? 0.15 : 0.95
+                      opacity: (eventRow.past && !eventRow.current) ? 0.15
+                        : (eventRow.ongoing ? 1.0 : 0.95)
                     }
 
                     Column {
                       id: eventBody
-                      x: Style.space(10)
+                      x: root.agendaBodyInset
                       width: parent.width - x
                       spacing: Style.space(1)
 
@@ -1750,15 +1839,17 @@ Panel {
                           // Fixed width so every title in the list starts on
                           // the same column, whether its neighbour is an
                           // all-day entry or a 09:00 - 12:00 range.
-                          width: Style.space(86)
+                          width: root.agendaTimeWidth
                           text: eventRow.modelData.allDay
                             ? "all day"
                             : (Events.timeLabel(eventRow.modelData) || "—")
                           // Full strength, like the day numbers in the grid:
                           // the column the eye runs down to find "what is at
                           // two" is not supporting text, it is one of the two
-                          // things a row is actually read for.
-                          color: root.contentForeground
+                          // things a row is actually read for. A step above
+                          // full for the one that is running.
+                          color: eventRow.ongoing ? root.textVivid
+                                                  : root.contentForeground
                           font.family: root.contentFontFamily
                           font.pixelSize: Style.font.bodySmall
                           font.italic: eventRow.modelData.allDay
@@ -1768,7 +1859,8 @@ Panel {
                           width: parent.width - timeText.width - Style.space(8)
                             - (eventRow.joinUrl !== "" ? Style.space(22) : 0)
                           text: eventRow.modelData.title
-                          color: root.contentForeground
+                          color: eventRow.ongoing ? root.textVivid
+                                                  : root.contentForeground
                           font.family: root.contentFontFamily
                           font.pixelSize: Style.font.bodySmall
                           elide: Text.ElideRight
@@ -1808,7 +1900,8 @@ Panel {
                         x: timeText.width + Style.space(8)
                         width: parent.width - x
                         text: detail
-                        color: root.textCaption
+                        color: eventRow.ongoing ? root.textSupport
+                                                : root.textCaption
                         font.family: root.contentFontFamily
                         font.pixelSize: Style.font.caption
                         elide: Text.ElideRight
@@ -1854,6 +1947,15 @@ Panel {
                       }
                     }
                   }
+                  }
+                }
+
+                // One past the last entry has no row to sit above, so the
+                // line ends the list instead: everything today is behind us.
+                NowLine {
+                  width: agendaColumn.width
+                  visible: root.nowMarkerIndex >= 0
+                    && root.nowMarkerIndex === root.selectedEvents.length
                 }
               }
             }

@@ -79,6 +79,46 @@ function isPast(event, dayKey, todayKey, nowHM) {
   return end <= String(nowHM || "")
 }
 
+// Ongoing is the other end of isPast: begun and not yet over, today. It is
+// the one state the agenda lights up rather than dims, because it answers
+// "where am I supposed to be right now". An all-day entry is deliberately
+// never ongoing -- a birthday or a week of leave is true all day and would
+// leave the mark burning from midnight to midnight, saying nothing.
+function isOngoing(event, dayKey, todayKey, nowHM) {
+  if (!event || !dayKey || !todayKey) return false
+  if (String(dayKey) !== String(todayKey)) return false
+  if (event.allDay) return false
+  if (isPast(event, dayKey, todayKey, nowHM)) return false
+  var start = String(event.time || "")
+  // A middle day of a multi-day run carries neither time and is running by
+  // definition -- the same reading isPast takes of it.
+  if (start === "") return true
+  return start <= String(nowHM || "")
+}
+
+// Where the "now" line belongs in a day's agenda: the number of entries that
+// sort above it. -1 means "do not draw it at all" -- on any day but today, on
+// an empty list, and while something is running, since the lit row already
+// says where now is and a second mark for the same fact only crowds it.
+function nowMarkerIndex(events, dayKey, todayKey, nowHM) {
+  if (!events || events.length === 0) return -1
+  if (!dayKey || !todayKey || String(dayKey) !== String(todayKey)) return -1
+  var i
+  for (i = 0; i < events.length; i++)
+    if (isOngoing(events[i], dayKey, todayKey, nowHM)) return -1
+  // The exporter sorts all-day entries first and the rest by start, so the
+  // line falls after everything that has already begun. All-day entries have
+  // no place on the clock and stay above it whatever the hour.
+  var now = String(nowHM || "")
+  for (i = 0; i < events.length; i++) {
+    var e = events[i] || {}
+    if (e.allDay) continue
+    var start = String(e.time || "")
+    if (start !== "" && start > now) break
+  }
+  return i
+}
+
 // opts: { hidden: [calendar names], hidePast: bool, todayKey, nowHM }
 function visibleForDay(data, key, opts) {
   var events = forDay(data, key)
@@ -325,6 +365,8 @@ if (typeof module !== "undefined") {
     countForDay: countForDay,
     isHidden: isHidden,
     isPast: isPast,
+    isOngoing: isOngoing,
+    nowMarkerIndex: nowMarkerIndex,
     visibleForDay: visibleForDay,
     dotColors: dotColors,
     hasMoreThanDots: hasMoreThanDots,

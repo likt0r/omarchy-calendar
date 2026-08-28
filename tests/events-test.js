@@ -149,6 +149,44 @@ checkTrue('isPast: start only, not yet begun',
 checkTrue('isPast: null event', !Events.isPast(null, T, T, NOW))
 checkTrue('isPast: missing todayKey', !Events.isPast(ended, T, '', NOW))
 
+// Ongoing: begun, not yet over, today. The state the row lights up for.
+checkTrue('isOngoing: running right now', Events.isOngoing(running, T, T, NOW))
+checkTrue('isOngoing: finished is not', !Events.isOngoing(ended, T, T, NOW))
+checkTrue('isOngoing: still ahead is not', !Events.isOngoing(later, T, T, NOW))
+// All day is true all day, which is exactly why it must not light up.
+checkTrue('isOngoing: all-day today is not', !Events.isOngoing(allDay, T, T, NOW))
+checkTrue('isOngoing: running, but on another day',
+  !Events.isOngoing(running, '2026-08-28', T, NOW))
+checkTrue('isOngoing: starts exactly now',
+  Events.isOngoing({ time: '12:00', endTime: '13:00' }, T, T, NOW))
+checkTrue('isOngoing: ends exactly now is over',
+  !Events.isOngoing({ time: '11:00', endTime: '12:00' }, T, T, NOW))
+// A middle day of a run carries neither time and is running by definition.
+checkTrue('isOngoing: continuation day without times',
+  Events.isOngoing({ time: '', endTime: '' }, T, T, NOW))
+checkTrue('isOngoing: last day of a run, still to end',
+  Events.isOngoing({ time: '', endTime: '14:00' }, T, T, NOW))
+checkTrue('isOngoing: last day of a run, already ended',
+  !Events.isOngoing({ time: '', endTime: '09:00' }, T, T, NOW))
+checkTrue('isOngoing: null event', !Events.isOngoing(null, T, T, NOW))
+
+// The now-line: where it falls, and when it stays away
+const nowIndex = (list, day) => Events.nowMarkerIndex(list, day || T, T, NOW)
+check('nowMarkerIndex: between what is over and what is ahead',
+  nowIndex([ended, later]), 1)
+check('nowMarkerIndex: all-day entries always sort above it',
+  nowIndex([allDay, ended, later]), 2)
+check('nowMarkerIndex: a day still entirely ahead', nowIndex([allDay, later]), 1)
+check('nowMarkerIndex: a day that is over ends with it', nowIndex([ended]), 1)
+// A running row already says where now is; a second mark would repeat it.
+check('nowMarkerIndex: nothing while something runs',
+  nowIndex([ended, running, later]), -1)
+check('nowMarkerIndex: not on another day', nowIndex([ended, later], '2026-08-28'), -1)
+check('nowMarkerIndex: not on an empty day', nowIndex([]), -1)
+check('nowMarkerIndex: no list at all', nowIndex(null), -1)
+check('nowMarkerIndex: no today', Events.nowMarkerIndex([ended], T, '', NOW), -1)
+
+
 // visibleForDay ties both filters together
 const vis = Events.parse(JSON.stringify({
   days: {
